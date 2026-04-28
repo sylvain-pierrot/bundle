@@ -3,6 +3,7 @@ pub mod eid;
 pub mod error;
 pub mod extension;
 
+pub use bundle::builder::BundleBuilder;
 pub use bundle::canonical::{BlockFlags, CanonicalBlock};
 pub use bundle::crc::Crc;
 pub use bundle::primary::{BundleFlags, CreationTimestamp, FragmentInfo, PrimaryBlock};

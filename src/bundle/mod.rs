@@ -1,8 +1,10 @@
+pub mod builder;
 pub mod canonical;
 pub mod crc;
 pub mod payload;
 pub mod primary;
 
+use builder::BundleBuilder;
 use canonical::{BlockFlags, CanonicalBlock};
 use crc::Crc;
 pub use payload::PayloadRef;
@@ -10,6 +12,7 @@ use primary::PrimaryBlock;
 
 use aqueduct_cbor::{Decoder, Encoder, FromCbor, ToCbor};
 
+use crate::Eid;
 use crate::error::Error;
 
 /// A BPv7 bundle (RFC 9171 §4.1).
@@ -24,6 +27,16 @@ pub struct Bundle<'a> {
 }
 
 impl<'a> Bundle<'a> {
+    /// Start building a bundle with the required fields.
+    pub fn builder(
+        dest_eid: Eid<'a>,
+        src_node_id: Eid<'a>,
+        lifetime: u64,
+        payload: &'a [u8],
+    ) -> BundleBuilder<'a> {
+        BundleBuilder::new(dest_eid, src_node_id, lifetime, payload)
+    }
+
     /// Decode a bundle from a byte slice.
     pub fn decode(data: &'a [u8]) -> Result<Self, Error> {
         let mut dec = Decoder::new(data);

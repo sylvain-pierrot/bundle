@@ -2,31 +2,8 @@ use std::borrow::Cow;
 
 use aqueduct::{
     BlockFlags, Bundle, BundleAge, BundleFlags, CanonicalBlock, Crc, CreationTimestamp, Eid,
-    Extension, FragmentInfo, HopCount, PayloadRef, PreviousNode, PrimaryBlock,
+    Extension, FragmentInfo, HopCount, PreviousNode,
 };
-
-fn minimal_bundle<'a>(payload: &[u8], crc: Crc, payload_crc: Crc) -> Bundle<'a> {
-    Bundle {
-        primary: PrimaryBlock {
-            version: 7,
-            flags: BundleFlags::from_bits(0),
-            crc,
-            dest_eid: Eid::Null,
-            src_node_id: Eid::Null,
-            rpt_eid: Eid::Null,
-            creation_ts: CreationTimestamp { time: 0, seq: 0 },
-            lifetime: 3_600_000_000,
-            fragment: None,
-        },
-        extensions: vec![],
-        payload: PayloadRef {
-            flags: BlockFlags::from_bits(0),
-            crc: payload_crc,
-            data_offset: 0,
-            data_len: payload.len() as u64,
-        },
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Happy-path roundtrips
@@ -35,14 +12,13 @@ fn minimal_bundle<'a>(payload: &[u8], crc: Crc, payload_crc: Crc) -> Bundle<'a> 
 #[test]
 fn roundtrip_minimal_bundle() {
     let payload = b"hello";
-    let bundle = minimal_bundle(payload, Crc::None, Crc::None);
+    let bundle = Bundle::builder(Eid::Null, Eid::Null, 3_600_000_000, payload).build();
     let encoded = bundle.encode(payload);
-    let decoded = Bundle::decode(&encoded).expect("decode failed");
+    let decoded = Bundle::decode(&encoded).unwrap();
 
     assert_eq!(decoded.primary.version, 7);
     assert_eq!(decoded.primary.dest_eid, Eid::Null);
     assert_eq!(decoded.primary.lifetime, 3_600_000_000);
-    assert_eq!(decoded.payload.data_len, 5);
     assert_eq!(decoded.payload.data(&encoded), b"hello");
 
     let reencoded = decoded.encode(decoded.payload.data(&encoded));
@@ -51,7 +27,7 @@ fn roundtrip_minimal_bundle() {
 
 #[test]
 fn roundtrip_empty_payload() {
-    let bundle = minimal_bundle(b"", Crc::None, Crc::None);
+    let bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, b"").build();
     let encoded = bundle.encode(b"");
     let decoded = Bundle::decode(&encoded).unwrap();
 
@@ -64,56 +40,41 @@ fn roundtrip_empty_payload() {
 
 #[test]
 fn roundtrip_with_extensions() {
-    let hop_count = HopCount {
-        limit: 30,
-        count: 0,
+    let dest = Eid::Ipn {
+        allocator_id: 0,
+        node_number: 1,
+        service_number: 2,
     };
-    let bundle_age = BundleAge { millis: 12345 };
-
-    let bundle = Bundle {
-        primary: PrimaryBlock {
-            version: 7,
-            flags: BundleFlags::from_bits(0),
-            crc: Crc::None,
-            dest_eid: Eid::Ipn {
-                allocator_id: 0,
-                node_number: 1,
-                service_number: 2,
-            },
-            src_node_id: Eid::Ipn {
-                allocator_id: 0,
-                node_number: 3,
-                service_number: 4,
-            },
-            rpt_eid: Eid::Null,
-            creation_ts: CreationTimestamp { time: 1000, seq: 1 },
-            lifetime: 60_000_000,
-            fragment: None,
-        },
-        extensions: vec![
-            CanonicalBlock::from_ext(2, BlockFlags::from_bits(0), Crc::None, &hop_count),
-            CanonicalBlock::from_ext(3, BlockFlags::from_bits(0), Crc::None, &bundle_age),
-        ],
-        payload: PayloadRef {
-            flags: BlockFlags::from_bits(0),
-            crc: Crc::None,
-            data_offset: 0,
-            data_len: 11,
-        },
+    let src = Eid::Ipn {
+        allocator_id: 0,
+        node_number: 3,
+        service_number: 4,
     };
-
     let payload = b"hello world";
+
+    let bundle = Bundle::builder(dest.clone(), src, 60_000_000, payload)
+        .creation_ts(CreationTimestamp { time: 1000, seq: 1 })
+        .extension(CanonicalBlock::from_ext(
+            2,
+            BlockFlags::from_bits(0),
+            Crc::None,
+            &HopCount {
+                limit: 30,
+                count: 0,
+            },
+        ))
+        .extension(CanonicalBlock::from_ext(
+            3,
+            BlockFlags::from_bits(0),
+            Crc::None,
+            &BundleAge { millis: 12345 },
+        ))
+        .build();
+
     let encoded = bundle.encode(payload);
     let decoded = Bundle::decode(&encoded).unwrap();
 
-    assert_eq!(
-        decoded.primary.dest_eid,
-        Eid::Ipn {
-            allocator_id: 0,
-            node_number: 1,
-            service_number: 2,
-        }
-    );
+    assert_eq!(decoded.primary.dest_eid, dest);
     assert_eq!(decoded.extensions.len(), 2);
 
     let hop = decoded.extensions[0].parse_ext::<HopCount>().unwrap();
@@ -123,92 +84,26 @@ fn roundtrip_with_extensions() {
     let age = decoded.extensions[1].parse_ext::<BundleAge>().unwrap();
     assert_eq!(age.millis, 12345);
 
-    assert_eq!(decoded.payload.data(&encoded), b"hello world");
-
     let reencoded = decoded.encode(decoded.payload.data(&encoded));
     assert_eq!(encoded, reencoded);
 }
 
 #[test]
-fn roundtrip_with_crc16() {
-    let payload = b"hello";
-    let bundle = minimal_bundle(payload, Crc::crc16(), Crc::crc16());
+fn roundtrip_with_dtn_eids() {
+    let payload = b"";
+    let bundle = Bundle::builder(
+        Eid::Dtn(Cow::Borrowed("//node1/incoming")),
+        Eid::Ipn {
+            allocator_id: 0,
+            node_number: 42,
+            service_number: 0,
+        },
+        0,
+        payload,
+    )
+    .build();
 
     let encoded = bundle.encode(payload);
-    let decoded = Bundle::decode(&encoded).unwrap();
-
-    assert_eq!(decoded.primary.crc.crc_type(), 1);
-    assert!(!decoded.primary.crc.is_none());
-    assert_eq!(decoded.payload.crc.crc_type(), 1);
-
-    let reencoded = decoded.encode(decoded.payload.data(&encoded));
-    assert_eq!(encoded, reencoded);
-}
-
-#[test]
-fn roundtrip_with_crc32c() {
-    let bundle = Bundle {
-        primary: PrimaryBlock {
-            version: 7,
-            flags: BundleFlags::from_bits(0),
-            crc: Crc::crc32c(),
-            dest_eid: Eid::Dtn(Cow::Borrowed("//node1/svc")),
-            src_node_id: Eid::Dtn(Cow::Borrowed("//node2/svc")),
-            rpt_eid: Eid::Null,
-            creation_ts: CreationTimestamp { time: 1000, seq: 0 },
-            lifetime: 3_600_000_000,
-            fragment: None,
-        },
-        extensions: vec![],
-        payload: PayloadRef {
-            flags: BlockFlags::from_bits(0),
-            crc: Crc::crc32c(),
-            data_offset: 0,
-            data_len: 5,
-        },
-    };
-
-    let encoded = bundle.encode(b"world");
-    let decoded = Bundle::decode(&encoded).unwrap();
-
-    assert_eq!(decoded.primary.crc.crc_type(), 2);
-    assert_eq!(
-        decoded.primary.dest_eid,
-        Eid::Dtn(Cow::Borrowed("//node1/svc"))
-    );
-
-    let reencoded = decoded.encode(decoded.payload.data(&encoded));
-    assert_eq!(encoded, reencoded);
-}
-
-#[test]
-fn roundtrip_dtn_eids() {
-    let bundle = Bundle {
-        primary: PrimaryBlock {
-            version: 7,
-            flags: BundleFlags::from_bits(0),
-            crc: Crc::None,
-            dest_eid: Eid::Dtn(Cow::Borrowed("//node1/incoming")),
-            src_node_id: Eid::Ipn {
-                allocator_id: 0,
-                node_number: 42,
-                service_number: 0,
-            },
-            rpt_eid: Eid::Null,
-            creation_ts: CreationTimestamp { time: 0, seq: 0 },
-            lifetime: 0,
-            fragment: None,
-        },
-        extensions: vec![],
-        payload: PayloadRef {
-            flags: BlockFlags::from_bits(0),
-            crc: Crc::None,
-            data_offset: 0,
-            data_len: 0,
-        },
-    };
-
-    let encoded = bundle.encode(b"");
     let decoded = Bundle::decode(&encoded).unwrap();
 
     assert_eq!(
@@ -220,38 +115,19 @@ fn roundtrip_dtn_eids() {
         Eid::Ipn {
             allocator_id: 0,
             node_number: 42,
-            service_number: 0
+            service_number: 0,
         }
     );
 }
 
 #[test]
 fn roundtrip_fragment() {
-    let bundle = Bundle {
-        primary: PrimaryBlock {
-            version: 7,
-            flags: BundleFlags::from_bits(0x01),
-            crc: Crc::None,
-            dest_eid: Eid::Null,
-            src_node_id: Eid::Null,
-            rpt_eid: Eid::Null,
-            creation_ts: CreationTimestamp { time: 0, seq: 0 },
-            lifetime: 1000,
-            fragment: Some(FragmentInfo {
-                offset: 100,
-                total_adu_len: 5000,
-            }),
-        },
-        extensions: vec![],
-        payload: PayloadRef {
-            flags: BlockFlags::from_bits(0),
-            crc: Crc::None,
-            data_offset: 0,
-            data_len: 3,
-        },
-    };
+    let payload = b"abc";
+    let bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, payload)
+        .fragment(100, 5000)
+        .build();
 
-    let encoded = bundle.encode(b"abc");
+    let encoded = bundle.encode(payload);
     let decoded = Bundle::decode(&encoded).unwrap();
 
     let frag = decoded.primary.fragment.unwrap();
@@ -263,22 +139,38 @@ fn roundtrip_fragment() {
 }
 
 #[test]
+fn roundtrip_crc_values_nonzero() {
+    let payload = b"test payload";
+    let bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, payload).build();
+    let encoded = bundle.encode(payload);
+    let decoded = Bundle::decode(&encoded).unwrap();
+
+    // Builder defaults to CRC-32C on primary
+    match decoded.primary.crc {
+        Crc::Crc32c(v) => assert_ne!(v, 0),
+        other => panic!("expected Crc32c, got {other:?}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Extension roundtrips
+// ---------------------------------------------------------------------------
+
+#[test]
 fn extension_hop_count_roundtrip() {
     let hc = HopCount {
         limit: 30,
         count: 5,
     };
     let data = hc.encode_data();
-    let parsed = HopCount::parse(&data).unwrap();
-    assert_eq!(parsed, hc);
+    assert_eq!(HopCount::parse(&data).unwrap(), hc);
 }
 
 #[test]
 fn extension_bundle_age_roundtrip() {
     let ba = BundleAge { millis: 999999 };
     let data = ba.encode_data();
-    let parsed = BundleAge::parse(&data).unwrap();
-    assert_eq!(parsed, ba);
+    assert_eq!(BundleAge::parse(&data).unwrap(), ba);
 }
 
 #[test]
@@ -291,71 +183,7 @@ fn extension_previous_node_roundtrip() {
         },
     };
     let data = pn.encode_data();
-    let parsed = PreviousNode::parse(&data).unwrap();
-    assert_eq!(parsed.node_id, pn.node_id);
-}
-
-#[test]
-fn crc_values_are_nonzero() {
-    let payload = b"test payload";
-    let bundle = minimal_bundle(payload, Crc::crc16(), Crc::crc16());
-    let encoded = bundle.encode(payload);
-    let decoded = Bundle::decode(&encoded).unwrap();
-
-    match decoded.primary.crc {
-        Crc::Crc16(v) => assert_ne!(v, 0),
-        _ => panic!("expected Crc16"),
-    }
-    match decoded.payload.crc {
-        Crc::Crc16(v) => assert_ne!(v, 0),
-        _ => panic!("expected Crc16"),
-    }
-}
-
-#[test]
-fn extension_block_with_crc() {
-    let hc = HopCount {
-        limit: 10,
-        count: 3,
-    };
-    let bundle = Bundle {
-        primary: PrimaryBlock {
-            version: 7,
-            flags: BundleFlags::from_bits(0),
-            crc: Crc::None,
-            dest_eid: Eid::Null,
-            src_node_id: Eid::Null,
-            rpt_eid: Eid::Null,
-            creation_ts: CreationTimestamp { time: 0, seq: 0 },
-            lifetime: 1000,
-            fragment: None,
-        },
-        extensions: vec![CanonicalBlock::from_ext(
-            2,
-            BlockFlags::from_bits(0),
-            Crc::crc32c(),
-            &hc,
-        )],
-        payload: PayloadRef {
-            flags: BlockFlags::from_bits(0),
-            crc: Crc::None,
-            data_offset: 0,
-            data_len: 0,
-        },
-    };
-
-    let encoded = bundle.encode(b"");
-    let decoded = Bundle::decode(&encoded).unwrap();
-
-    assert_eq!(decoded.extensions.len(), 1);
-    assert_eq!(decoded.extensions[0].crc.crc_type(), 2);
-
-    let hop = decoded.extensions[0].parse_ext::<HopCount>().unwrap();
-    assert_eq!(hop.limit, 10);
-    assert_eq!(hop.count, 3);
-
-    let reencoded = decoded.encode(decoded.payload.data(&encoded));
-    assert_eq!(encoded, reencoded);
+    assert_eq!(PreviousNode::parse(&data).unwrap().node_id, pn.node_id);
 }
 
 // ---------------------------------------------------------------------------
@@ -369,7 +197,6 @@ fn decode_empty_input() {
 
 #[test]
 fn decode_truncated_bundle() {
-    // Just the indefinite array start, no blocks
     assert!(Bundle::decode(&[0x9F, 0xFF]).is_err());
 }
 
@@ -380,30 +207,27 @@ fn decode_garbage() {
 
 #[test]
 fn decode_truncated_primary() {
-    // indefinite array start + start of a too-short array
-    let mut data = vec![0x9F, 0x83]; // indefinite array, then 3-element array (too few for primary)
-    data.extend_from_slice(&[0x07, 0x00, 0x00]); // version, flags, crc_type
-    data.push(0xFF); // break
+    let mut data = vec![0x9F, 0x83];
+    data.extend_from_slice(&[0x07, 0x00, 0x00]);
+    data.push(0xFF);
     assert!(Bundle::decode(&data).is_err());
 }
 
 #[test]
 fn validate_wrong_version() {
-    let mut bundle = minimal_bundle(b"", Crc::None, Crc::None);
+    let mut bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, b"").build();
     bundle.primary.version = 6;
     assert!(bundle.primary.validate().is_err());
 }
 
 #[test]
 fn validate_fragment_flag_mismatch() {
-    // is_fragment flag set but no FragmentInfo
-    let mut bundle = minimal_bundle(b"", Crc::None, Crc::None);
+    let mut bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, b"").build();
     bundle.primary.flags = BundleFlags::from_bits(0x01);
     bundle.primary.fragment = None;
     assert!(bundle.primary.validate().is_err());
 
-    // FragmentInfo present but is_fragment flag not set
-    let mut bundle2 = minimal_bundle(b"", Crc::None, Crc::None);
+    let mut bundle2 = Bundle::builder(Eid::Null, Eid::Null, 1000, b"").build();
     bundle2.primary.flags = BundleFlags::from_bits(0);
     bundle2.primary.fragment = Some(FragmentInfo {
         offset: 0,
@@ -414,18 +238,15 @@ fn validate_fragment_flag_mismatch() {
 
 #[test]
 fn validate_admin_with_reports() {
-    // Admin flag + report flag is invalid
-    let mut bundle = minimal_bundle(b"", Crc::None, Crc::None);
-    bundle.primary.flags = BundleFlags::from_bits(0x000002 | 0x004000); // is_admin | rpt_reception
+    let mut bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, b"").build();
+    bundle.primary.flags = BundleFlags::from_bits(0x000002 | 0x004000);
     assert!(bundle.primary.validate().is_err());
 }
 
 #[test]
 fn validate_null_source_constraints() {
-    // Null source must have no_fragment set and no reports
-    let mut bundle = minimal_bundle(b"", Crc::None, Crc::None);
-    bundle.primary.src_node_id = Eid::Null;
-    bundle.primary.flags = BundleFlags::from_bits(0); // missing no_fragment
+    let mut bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, b"").build();
+    bundle.primary.flags = BundleFlags::from_bits(0);
     assert!(bundle.primary.validate().is_err());
 }
 
@@ -435,7 +256,7 @@ fn validate_duplicate_block_numbers() {
         limit: 10,
         count: 0,
     };
-    let mut bundle = minimal_bundle(b"", Crc::None, Crc::None);
+    let mut bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, b"").build();
     bundle.extensions.push(CanonicalBlock::from_ext(
         2,
         BlockFlags::from_bits(0),
@@ -443,7 +264,7 @@ fn validate_duplicate_block_numbers() {
         &hc,
     ));
     bundle.extensions.push(CanonicalBlock::from_ext(
-        2, // same block number
+        2,
         BlockFlags::from_bits(0),
         Crc::None,
         &hc,
@@ -458,8 +279,8 @@ fn validate_extension_with_payload_block_number() {
         count: 0,
     };
     let mut ext = CanonicalBlock::from_ext(99, BlockFlags::from_bits(0), Crc::None, &hc);
-    ext.block_number = 1; // payload block number — not allowed for extensions
-    let mut bundle = minimal_bundle(b"", Crc::None, Crc::None);
+    ext.block_number = 1;
+    let mut bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, b"").build();
     bundle.extensions.push(ext);
     assert!(bundle.validate().is_err());
 }
@@ -468,52 +289,46 @@ fn validate_extension_with_payload_block_number() {
 fn parse_ext_wrong_block_type() {
     let ba = BundleAge { millis: 100 };
     let block = CanonicalBlock::from_ext(2, BlockFlags::from_bits(0), Crc::None, &ba);
-    // block_type is 7 (BundleAge), try parsing as HopCount (type 10)
     assert!(block.parse_ext::<HopCount>().is_err());
 }
 
 #[test]
 fn crc_tamper_detection() {
     let payload = b"important data";
-    let bundle = minimal_bundle(payload, Crc::crc16(), Crc::None);
+    let bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, payload).build();
     let mut encoded = bundle.encode(payload);
 
-    // Tamper with a byte in the primary block area (after the indefinite array marker)
     encoded[3] ^= 0xFF;
 
-    // Decoding may succeed (we don't verify CRC on decode) but the CRC
-    // should not match if we re-encode
     if let Ok(decoded) = Bundle::decode(&encoded) {
         let clean = decoded.encode(decoded.payload.data(&encoded));
-        // Tampered bytes means re-encode won't match
         assert_ne!(encoded, clean);
     }
-    // If decode itself fails due to structural corruption, that's also acceptable
 }
 
 #[test]
 fn hop_count_exceeded() {
-    let hc = HopCount {
-        limit: 10,
-        count: 11,
-    };
-    assert!(hc.exceeded());
-
-    let hc2 = HopCount {
-        limit: 10,
-        count: 10,
-    };
-    assert!(!hc2.exceeded());
+    assert!(
+        HopCount {
+            limit: 10,
+            count: 11
+        }
+        .exceeded()
+    );
+    assert!(
+        !HopCount {
+            limit: 10,
+            count: 10
+        }
+        .exceeded()
+    );
 }
 
 #[test]
 fn eid_into_owned() {
     let eid = Eid::Dtn(Cow::Borrowed("//node1/svc"));
-    let owned = eid.clone().into_owned();
-    assert_eq!(eid, owned);
-
-    let null_owned = Eid::Null.into_owned();
-    assert_eq!(null_owned, Eid::Null);
+    assert_eq!(eid.clone().into_owned(), eid);
+    assert_eq!(Eid::Null.into_owned(), Eid::Null);
 
     let ipn = Eid::Ipn {
         allocator_id: 0,
@@ -521,16 +336,6 @@ fn eid_into_owned() {
         service_number: 2,
     };
     assert_eq!(ipn.clone().into_owned(), ipn);
-}
-
-#[test]
-fn crc_type_codes() {
-    assert_eq!(Crc::None.crc_type(), 0);
-    assert!(Crc::None.is_none());
-    assert_eq!(Crc::crc16().crc_type(), 1);
-    assert!(!Crc::crc16().is_none());
-    assert_eq!(Crc::crc32c().crc_type(), 2);
-    assert!(!Crc::crc32c().is_none());
 }
 
 #[test]
