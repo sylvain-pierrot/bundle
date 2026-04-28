@@ -1,3 +1,5 @@
+use aqueduct_cbor::{Decoder, Encoder, FromCbor, ToCbor};
+
 use crate::eid::Eid;
 use crate::error::Error;
 use crate::extension::Extension;
@@ -11,8 +13,15 @@ pub struct PreviousNode<'a> {
 impl Extension for PreviousNode<'_> {
     const BLOCK_TYPE: u64 = 6;
 
-    fn parse(_data: &[u8]) -> Result<Self, Error> {
-        // TODO: delegate to external CBOR decoder
-        todo!("CBOR decode for PreviousNode")
+    fn parse(data: &[u8]) -> Result<Self, Error> {
+        let mut dec = Decoder::new(data);
+        let node_id = Eid::decode(&mut dec)?.into_owned();
+        Ok(PreviousNode { node_id })
+    }
+
+    fn encode_data(&self) -> Vec<u8> {
+        let mut enc = Encoder::new();
+        self.node_id.encode(&mut enc);
+        enc.into_bytes()
     }
 }

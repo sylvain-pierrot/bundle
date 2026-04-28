@@ -1,7 +1,12 @@
+[workspace]
+members = ["cbor"]
+
 [package]
 name = "aqueduct"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+aqueduct-cbor = { path = "cbor" }
+crc = "3"
 thiserror = "2.0.18"

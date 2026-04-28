@@ -1,3 +1,5 @@
+use aqueduct_cbor::{Decoder, Encoder, FromCbor, ToCbor};
+
 use crate::bundle::crc::Crc;
 use crate::eid::Eid;
 use crate::error::Error;
@@ -115,5 +117,96 @@ impl PrimaryBlock<'_> {
         }
 
         Ok(())
+    }
+}
+
+impl<'a> FromCbor<'a> for PrimaryBlock<'a> {
+    type Error = Error;
+
+    fn decode(dec: &mut Decoder<'a>) -> Result<Self, Self::Error> {
+        let len = dec.read_array_len()?;
+        if !(8..=11).contains(&len) {
+            return Err(Error::InvalidCbor);
+        }
+
+        let version = dec.read_uint()? as u8;
+        let flags = BundleFlags::from_bits(dec.read_uint()?);
+        let crc_type = dec.read_uint()?;
+        let dest_eid = Eid::decode(dec)?;
+        let src_node_id = Eid::decode(dec)?;
+        let rpt_eid = Eid::decode(dec)?;
+
+        let ts_len = dec.read_array_len()?;
+        if ts_len != 2 {
+            return Err(Error::InvalidCbor);
+        }
+        let creation_ts = CreationTimestamp {
+            time: dec.read_uint()?,
+            seq: dec.read_uint()?,
+        };
+
+        let lifetime = dec.read_uint()?;
+
+        let has_crc = crc_type != 0;
+        let has_fragment = match (len, has_crc) {
+            (8, false) | (9, true) => false,
+            (10, false) | (11, true) => true,
+            _ => return Err(Error::InvalidCbor),
+        };
+
+        let fragment = if has_fragment {
+            Some(FragmentInfo {
+                offset: dec.read_uint()?,
+                total_adu_len: dec.read_uint()?,
+            })
+        } else {
+            None
+        };
+
+        let crc = if has_crc {
+            Crc::decode_value(dec, crc_type)?
+        } else {
+            Crc::None
+        };
+
+        Ok(PrimaryBlock {
+            version,
+            flags,
+            crc,
+            dest_eid,
+            src_node_id,
+            rpt_eid,
+            creation_ts,
+            lifetime,
+            fragment,
+        })
+    }
+}
+
+impl ToCbor for PrimaryBlock<'_> {
+    fn encode(&self, enc: &mut Encoder) {
+        let has_crc = !self.crc.is_none();
+        let has_frag = self.fragment.is_some();
+        let len = 8 + if has_frag { 2 } else { 0 } + if has_crc { 1 } else { 0 };
+
+        let block_start = enc.position();
+        enc.write_array(len);
+        enc.write_uint(self.version as u64);
+        enc.write_uint(self.flags.bits());
+        enc.write_uint(self.crc.crc_type());
+        self.dest_eid.encode(enc);
+        self.src_node_id.encode(enc);
+        self.rpt_eid.encode(enc);
+        enc.write_array(2);
+        enc.write_uint(self.creation_ts.time);
+        enc.write_uint(self.creation_ts.seq);
+        enc.write_uint(self.lifetime);
+
+        if let Some(frag) = &self.fragment {
+            enc.write_uint(frag.offset);
+            enc.write_uint(frag.total_adu_len);
+        }
+
+        self.crc.encode_and_finalize(enc, block_start);
     }
 }

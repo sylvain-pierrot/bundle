@@ -1,3 +1,5 @@
+use aqueduct_cbor::{Decoder, Encoder};
+
 use crate::error::Error;
 use crate::extension::Extension;
 
@@ -18,8 +20,22 @@ impl HopCount {
 impl Extension for HopCount {
     const BLOCK_TYPE: u64 = 10;
 
-    fn parse(_data: &[u8]) -> Result<Self, Error> {
-        // TODO: delegate to external CBOR decoder
-        todo!("CBOR decode for HopCount")
+    fn parse(data: &[u8]) -> Result<Self, Error> {
+        let mut dec = Decoder::new(data);
+        let len = dec.read_array_len()?;
+        if len != 2 {
+            return Err(Error::InvalidCbor);
+        }
+        let limit = dec.read_uint()? as u8;
+        let count = dec.read_uint()? as u8;
+        Ok(HopCount { limit, count })
+    }
+
+    fn encode_data(&self) -> Vec<u8> {
+        let mut enc = Encoder::new();
+        enc.write_array(2);
+        enc.write_uint(self.limit as u64);
+        enc.write_uint(self.count as u64);
+        enc.into_bytes()
     }
 }

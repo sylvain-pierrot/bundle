@@ -8,14 +8,17 @@ pub use previous_node::PreviousNode;
 
 use crate::error::Error;
 
-/// Extension block: parse block-type-specific data from raw bytes.
+/// Extension block: parse and encode block-type-specific data.
 ///
-/// CBOR decoding is delegated to an external crate. The `parse` method
-/// receives the already-extracted block-type-specific data bytes.
+/// The `parse` method receives the already-extracted block-type-specific
+/// data bytes (CBOR). The `encode_data` method produces those bytes.
 pub trait Extension: Sized {
     /// Block type code for this extension.
     const BLOCK_TYPE: u64;
 
     /// Parse block-type-specific data from raw bytes.
     fn parse(data: &[u8]) -> Result<Self, Error>;
+
+    /// Encode block-type-specific data to raw bytes.
+    fn encode_data(&self) -> Vec<u8>;
 }

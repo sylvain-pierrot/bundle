@@ -2,6 +2,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum Error {
+    #[error(transparent)]
+    Cbor(#[from] aqueduct_cbor::Error),
     #[error("invalid bundle processing control flags")]
     InvalidFlags,
     #[error("unsupported bundle version: {0}")]
@@ -16,4 +18,8 @@ pub enum Error {
     InvalidPayloadCount(usize),
     #[error("duplicate block number: {0}")]
     DuplicateBlockNumber(u64),
+    #[error("invalid CBOR structure")]
+    InvalidCbor,
+    #[error("CRC verification failed")]
+    CrcMismatch,
 }

@@ -1,3 +1,5 @@
+use aqueduct_cbor::{Decoder, Encoder};
+
 use crate::error::Error;
 use crate::extension::Extension;
 
@@ -10,8 +12,15 @@ pub struct BundleAge {
 impl Extension for BundleAge {
     const BLOCK_TYPE: u64 = 7;
 
-    fn parse(_data: &[u8]) -> Result<Self, Error> {
-        // TODO: delegate to external CBOR decoder
-        todo!("CBOR decode for BundleAge")
+    fn parse(data: &[u8]) -> Result<Self, Error> {
+        let mut dec = Decoder::new(data);
+        let millis = dec.read_uint()?;
+        Ok(BundleAge { millis })
+    }
+
+    fn encode_data(&self) -> Vec<u8> {
+        let mut enc = Encoder::new();
+        enc.write_uint(self.millis);
+        enc.into_bytes()
     }
 }
