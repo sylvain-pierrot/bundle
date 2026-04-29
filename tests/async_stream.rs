@@ -70,7 +70,8 @@ async fn async_reader_roundtrip() {
         MemoryRetention::new(),
     )
     .unwrap()
-    .build();
+    .build()
+    .unwrap();
 
     let encoded = bundle.encode().unwrap();
 
@@ -170,7 +171,8 @@ async fn async_full_roundtrip() {
             count: 1,
         },
     ))
-    .build();
+    .build()
+    .unwrap();
 
     // Async encode
     let mut encoded = Vec::new();

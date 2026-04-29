@@ -115,7 +115,7 @@ impl<S> BundleBuilder<S> {
         self
     }
 
-    pub fn build(mut self) -> Bundle<S> {
+    pub fn build(mut self) -> Result<Bundle<S>, Error> {
         if self.src_node_id.is_null() {
             self.bundle_flags |= 0x000004;
         }
@@ -131,7 +131,7 @@ impl<S> BundleBuilder<S> {
             },
         });
 
-        Bundle::from_parts(
+        let bundle = Bundle::from_parts(
             PrimaryBlock {
                 version: 7,
                 flags: BundleFlags::from_bits(self.bundle_flags),
@@ -145,7 +145,9 @@ impl<S> BundleBuilder<S> {
             },
             self.blocks,
             self.retention,
-        )
+        );
+        bundle.validate()?;
+        Ok(bundle)
     }
 }
 

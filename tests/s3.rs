@@ -167,7 +167,8 @@ async fn s3_small_bundle() {
         MemoryRetention::new(),
     )
     .unwrap()
-    .build();
+    .build()
+    .unwrap();
 
     let encoded = bundle.encode().unwrap();
 
@@ -214,7 +215,8 @@ async fn s3_large_bundle_multipart() {
         MemoryRetention::new(),
     )
     .unwrap()
-    .build();
+    .build()
+    .unwrap();
 
     let encoded = bundle.encode().unwrap();
 
@@ -315,7 +317,8 @@ async fn s3_stream_from_http() {
     )
     .await
     .unwrap()
-    .build();
+    .build()
+    .unwrap();
 
     assert_eq!(bundle.payload_len(), source_data.len() as u64);
 

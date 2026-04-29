@@ -108,6 +108,17 @@ impl<C: S3Ops> S3Retention<C> {
     }
 }
 
+impl<C: S3Ops> Drop for S3Retention<C> {
+    fn drop(&mut self) {
+        if self.upload_id.is_some() {
+            eprintln!(
+                "S3Retention dropped without flush() or discard(): bucket={}, key={}",
+                self.bucket, self.key
+            );
+        }
+    }
+}
+
 pub struct S3Reader {
     data: Cursor<Vec<u8>>,
 }
@@ -136,6 +147,14 @@ impl<C: S3Ops> AsyncRetention for S3Retention<C> {
     async fn flush(&mut self) -> io::Result<()> {
         self.upload_buffer().await?;
         if let Some(upload_id) = self.upload_id.take() {
+            if self.parts.is_empty() {
+                self.part_number += 1;
+                let etag = self
+                    .client
+                    .upload_part(&self.bucket, &self.key, &upload_id, self.part_number, &[])
+                    .await?;
+                self.parts.push((self.part_number, etag));
+            }
             self.client
                 .complete_multipart_upload(&self.bucket, &self.key, &upload_id, &self.parts)
                 .await?;
@@ -144,6 +163,11 @@ impl<C: S3Ops> AsyncRetention for S3Retention<C> {
     }
 
     async fn reader(&self, offset: u64, len: u64) -> io::Result<Self::Reader<'_>> {
+        if len == 0 {
+            return Ok(S3Reader {
+                data: Cursor::new(Vec::new()),
+            });
+        }
         let data = self
             .client
             .get_object_range(&self.bucket, &self.key, offset, len)

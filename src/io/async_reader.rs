@@ -6,6 +6,7 @@ use std::task::Poll;
 
 use futures_io::AsyncRead;
 
+use super::reader::OpenBundleReader;
 use crate::bundle::Bundle;
 use crate::error::Error;
 use crate::retention::{AsyncRetention, NoopRetention};
@@ -59,7 +60,7 @@ impl BundleAsyncReader {
             .reader(0, total)
             .await
             .map_err(aqueduct_cbor::Error::from)?;
-        match super::reader::OpenBundleReader::open(source, NoopRetention).into_bundle() {
+        match OpenBundleReader::open(source, NoopRetention).into_bundle() {
             Ok(noop_bundle) => Ok(noop_bundle.swap_retention(retention)),
             Err(e) => {
                 let _ = retention.discard().await;

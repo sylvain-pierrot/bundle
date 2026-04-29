@@ -41,6 +41,7 @@ fn stream_roundtrip_minimal() {
                 assert_eq!(len, payload.len() as u64);
                 session
                     .payload_reader()
+                    .unwrap()
                     .read_to_end(&mut read_payload)
                     .unwrap();
             }
@@ -90,6 +91,7 @@ fn stream_roundtrip_with_crc() {
             BlockEvent::Payload { .. } => {
                 session
                     .payload_reader()
+                    .unwrap()
                     .read_to_end(&mut read_payload)
                     .unwrap();
             }
@@ -278,7 +280,7 @@ fn stream_forwarding_pattern() {
                     .unwrap();
                 let mut buf = [0u8; 8192];
                 {
-                    let mut pr = session.payload_reader();
+                    let mut pr = session.payload_reader().unwrap();
                     loop {
                         let n = pr.read(&mut buf).unwrap();
                         if n == 0 {
@@ -306,6 +308,7 @@ fn stream_forwarding_pattern() {
             BlockEvent::Payload { .. } => {
                 session2
                     .payload_reader()
+                    .unwrap()
                     .read_to_end(&mut fwd_payload)
                     .unwrap();
             }
@@ -323,7 +326,8 @@ fn memory_retention_roundtrip() {
     let payload = b"memory retention test";
     let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
     let encoded = bundle.encode().unwrap();
     let decoded = BundleReader::new()
         .read_from(encoded.as_slice(), MemoryRetention::new())
@@ -346,7 +350,8 @@ fn retention_builder_payload_reader() {
     let payload = b"builder stores in retention";
     let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
     let mut buf = Vec::new();
     bundle
         .payload_reader()
@@ -431,7 +436,8 @@ fn disk_retention_roundtrip() {
         MemoryRetention::new(),
     )
     .unwrap()
-    .build();
+    .build()
+    .unwrap();
 
     let encoded = bundle.encode().unwrap();
     let disk = aqueduct::DiskRetention::new(path).unwrap();
@@ -461,7 +467,8 @@ fn disk_retention_from_stream() {
 
     let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
     let encoded = bundle.encode().unwrap();
     std::fs::write(bundle_path, &encoded).unwrap();
 
@@ -509,7 +516,8 @@ fn streaming_crc_matches_inmemory_crc() {
 
     let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
     let inmem_buf = bundle.encode().unwrap();
 
     let stream_bundle = BundleReader::new()

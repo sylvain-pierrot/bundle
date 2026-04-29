@@ -168,8 +168,11 @@ impl<R: Read, S: Retention> OpenBundleReader<R, S> {
         &self.blocks
     }
 
-    pub fn payload_reader(&mut self) -> PayloadReader<'_, R, S> {
-        PayloadReader { reader: self }
+    pub fn payload_reader(&mut self) -> Result<PayloadReader<'_, R, S>, Error> {
+        if self.state != State::PayloadData {
+            return Err(Error::PayloadNotConsumed);
+        }
+        Ok(PayloadReader { reader: self })
     }
 
     pub fn walk(&mut self, len: u64) -> Result<(), Error> {
