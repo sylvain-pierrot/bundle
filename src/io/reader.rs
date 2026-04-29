@@ -11,8 +11,7 @@ use crate::bundle::crc::Crc;
 use crate::bundle::primary::PrimaryBlock;
 use crate::error::Error;
 use crate::filter::{BundleFilter, BundleMetadata, BundleMutator, FilterChain};
-use crate::io::tee::CaptureReader;
-use crate::io::tee::{DeferredReader, TeeReader};
+use crate::io::adapters::{CaptureReader, DeferredReader, TeeReader};
 use crate::retention::Retention;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

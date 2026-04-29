@@ -1,4 +1,4 @@
-//! Read adapters: TeeReader, CaptureReader, DeferredReader.
+//! Streaming read adapters for deferred retention.
 
 use std::io::{Read, Write};
 

@@ -1,11 +1,11 @@
 //! Streaming bundle I/O.
 
+pub(crate) mod adapters;
 #[cfg(feature = "async")]
 mod async_reader;
 #[cfg(feature = "async")]
 mod async_writer;
 mod reader;
-pub(crate) mod tee;
 mod writer;
 
 pub use reader::{BlockEvent, BundleReader, OpenBundleReader, PayloadReader};
