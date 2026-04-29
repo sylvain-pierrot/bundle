@@ -122,7 +122,7 @@ impl<R: Read, S: Retention> OpenBundleReader<R, S> {
             }
             State::Blocks => {}
             State::PayloadConsumed => {
-                let idx = self.payload_idx.unwrap();
+                let idx = self.payload_idx.ok_or(Error::InvalidPayloadCount(0))?;
                 self.blocks[idx].crc = if self.payload_crc_type != 0 {
                     Crc::decode(&mut self.dec, self.payload_crc_type)?
                 } else {
