@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use std::io::Read;
 
 use aqueduct_cbor::{Encoder, StreamDecoder, ToCbor, UintOrString};
@@ -8,9 +6,9 @@ use crate::error::Error;
 
 /// Endpoint identifier (RFC 9171 §4.2.5, updated by RFC 9758).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Eid<'a> {
+pub enum Eid {
     Null,
-    Dtn(Cow<'a, str>),
+    Dtn(String),
     Ipn {
         allocator_id: u32,
         node_number: u32,
@@ -18,7 +16,7 @@ pub enum Eid<'a> {
     },
 }
 
-impl Eid<'_> {
+impl Eid {
     #[inline]
     pub fn is_null(&self) -> bool {
         matches!(
@@ -32,24 +30,6 @@ impl Eid<'_> {
         )
     }
 
-    pub fn into_owned(self) -> Eid<'static> {
-        match self {
-            Eid::Null => Eid::Null,
-            Eid::Dtn(s) => Eid::Dtn(Cow::Owned(s.into_owned())),
-            Eid::Ipn {
-                allocator_id,
-                node_number,
-                service_number,
-            } => Eid::Ipn {
-                allocator_id,
-                node_number,
-                service_number,
-            },
-        }
-    }
-}
-
-impl Eid<'static> {
     pub(crate) fn decode<R: Read>(dec: &mut StreamDecoder<R>) -> Result<Self, Error> {
         let len = dec.read_array_len()?;
         if len != 2 {
@@ -60,7 +40,7 @@ impl Eid<'static> {
             1 => match dec.read_uint_or_tstr()? {
                 UintOrString::Uint(0) => Ok(Eid::Null),
                 UintOrString::Uint(_) => Err(Error::InvalidEid),
-                UintOrString::Tstr(s) => Ok(Eid::Dtn(Cow::Owned(s))),
+                UintOrString::Tstr(s) => Ok(Eid::Dtn(s)),
             },
             2 => {
                 let inner_len = dec.read_array_len()?;
@@ -75,9 +55,7 @@ impl Eid<'static> {
     }
 }
 
-/// Decode IPN SSP from two parsed elements (2-element or 3-element form).
-/// Shared by both buffer-based and streaming decoders.
-pub(crate) fn decode_ipn_2elem(fqnn: u64, service_number: u64) -> Eid<'static> {
+pub(crate) fn decode_ipn_2elem(fqnn: u64, service_number: u64) -> Eid {
     let allocator_id = (fqnn >> 32) as u32;
     let node_number = fqnn as u32;
     if allocator_id == 0 && node_number == 0 && service_number == 0 {
@@ -95,7 +73,7 @@ pub(crate) fn decode_ipn_3elem(
     raw_alloc: u64,
     raw_node: u64,
     service_number: u64,
-) -> Result<Eid<'static>, Error> {
+) -> Result<Eid, Error> {
     let allocator_id = u32::try_from(raw_alloc).map_err(|_| Error::EidOverflow)?;
     let node_number = u32::try_from(raw_node).map_err(|_| Error::EidOverflow)?;
     if allocator_id == 0 && node_number == 0 && service_number == 0 {
@@ -109,7 +87,7 @@ pub(crate) fn decode_ipn_3elem(
     }
 }
 
-impl ToCbor for Eid<'_> {
+impl ToCbor for Eid {
     fn encode(&self, enc: &mut Encoder) {
         match self {
             Eid::Null => {
@@ -158,7 +136,7 @@ mod tests {
 
     #[test]
     fn roundtrip_dtn() {
-        let eid = Eid::Dtn(Cow::Borrowed("//node1/incoming"));
+        let eid = Eid::Dtn("//node1/incoming".into());
         let mut enc = Encoder::new();
         eid.encode(&mut enc);
         let mut dec = StreamDecoder::new(enc.as_bytes());
@@ -193,12 +171,14 @@ mod tests {
 
     #[test]
     fn ipn_null_is_null() {
-        let eid = Eid::Ipn {
-            allocator_id: 0,
-            node_number: 0,
-            service_number: 0,
-        };
-        assert!(eid.is_null());
+        assert!(
+            Eid::Ipn {
+                allocator_id: 0,
+                node_number: 0,
+                service_number: 0,
+            }
+            .is_null()
+        );
     }
 
     #[test]

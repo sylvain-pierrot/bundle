@@ -39,7 +39,7 @@ impl<W: Write> BundleWriter<W> {
         })
     }
 
-    pub fn write_primary(&mut self, primary: &PrimaryBlock<'_>) -> Result<(), Error> {
+    pub fn write_primary(&mut self, primary: &PrimaryBlock) -> Result<(), Error> {
         let mut buf = Encoder::new();
         primary.encode(&mut buf);
         self.enc.write_raw(buf.as_bytes())?;

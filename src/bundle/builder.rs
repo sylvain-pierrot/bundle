@@ -11,12 +11,12 @@ use crate::io::retention::Retention;
 
 /// Fluent builder for [`Bundle`].
 pub struct BundleBuilder<S> {
-    dest_eid: Eid<'static>,
-    src_node_id: Eid<'static>,
+    dest_eid: Eid,
+    src_node_id: Eid,
     lifetime: u64,
     payload_len: u64,
     bundle_flags: u64,
-    rpt_eid: Eid<'static>,
+    rpt_eid: Eid,
     creation_ts: CreationTimestamp,
     fragment: Option<FragmentInfo>,
     blocks: Vec<CanonicalBlock>,
@@ -25,8 +25,8 @@ pub struct BundleBuilder<S> {
 
 impl<S: Retention> BundleBuilder<S> {
     pub(crate) fn new(
-        dest_eid: Eid<'static>,
-        src_node_id: Eid<'static>,
+        dest_eid: Eid,
+        src_node_id: Eid,
         lifetime: u64,
         payload: &[u8],
         mut retention: S,
@@ -84,8 +84,8 @@ impl<S: Retention> BundleBuilder<S> {
         self
     }
 
-    pub fn report_to(mut self, eid: Eid<'_>) -> Self {
-        self.rpt_eid = eid.into_owned();
+    pub fn report_to(mut self, eid: Eid) -> Self {
+        self.rpt_eid = eid;
         self
     }
 

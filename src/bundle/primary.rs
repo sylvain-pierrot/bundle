@@ -94,19 +94,19 @@ pub struct FragmentInfo {
 
 /// Primary bundle block (RFC 9171 §4.3.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PrimaryBlock<'a> {
+pub struct PrimaryBlock {
     pub version: u8,
     pub flags: BundleFlags,
     pub crc: Crc,
-    pub dest_eid: Eid<'a>,
-    pub src_node_id: Eid<'a>,
-    pub rpt_eid: Eid<'a>,
+    pub dest_eid: Eid,
+    pub src_node_id: Eid,
+    pub rpt_eid: Eid,
     pub creation_ts: CreationTimestamp,
     pub lifetime: u64,
     pub fragment: Option<FragmentInfo>,
 }
 
-impl PrimaryBlock<'static> {
+impl PrimaryBlock {
     pub(crate) fn decode<R: Read>(dec: &mut StreamDecoder<R>) -> Result<Self, Error> {
         let len = dec.read_array_len()?;
         if !(8..=11).contains(&len) {
@@ -176,9 +176,7 @@ impl PrimaryBlock<'static> {
             fragment,
         })
     }
-}
 
-impl PrimaryBlock<'_> {
     pub fn validate(&self) -> Result<(), Error> {
         if self.version != 7 {
             return Err(Error::UnsupportedVersion(self.version));
@@ -193,7 +191,7 @@ impl PrimaryBlock<'_> {
     }
 }
 
-impl ToCbor for PrimaryBlock<'_> {
+impl ToCbor for PrimaryBlock {
     fn encode(&self, enc: &mut Encoder) {
         let has_crc = !self.crc.is_none();
         let has_frag = self.fragment.is_some();

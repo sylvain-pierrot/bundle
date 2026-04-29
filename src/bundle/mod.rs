@@ -27,18 +27,20 @@ use crate::io::retention::{NoopRetention, Retention};
 /// A BPv7 bundle (RFC 9171 §4.1).
 ///
 /// A bundle is a primary block followed by canonical blocks (extensions
-/// and exactly one payload block). The payload data lives in the
-/// retention backend.
+/// and exactly one payload block). The full wire-format bytes are stored
+/// in the retention backend — a write-once recovery point. Modifications
+/// happen in memory on the block structs; the retention is never modified
+/// after reception.
 #[derive(Debug, Clone)]
 pub struct Bundle<S> {
-    primary: PrimaryBlock<'static>,
+    primary: PrimaryBlock,
     blocks: Vec<CanonicalBlock>,
     retention: S,
 }
 
 impl<S> Bundle<S> {
     pub(crate) fn from_parts(
-        primary: PrimaryBlock<'static>,
+        primary: PrimaryBlock,
         blocks: Vec<CanonicalBlock>,
         retention: S,
     ) -> Self {
@@ -49,11 +51,11 @@ impl<S> Bundle<S> {
         }
     }
 
-    pub fn primary(&self) -> &PrimaryBlock<'static> {
+    pub fn primary(&self) -> &PrimaryBlock {
         &self.primary
     }
 
-    pub fn primary_mut(&mut self) -> &mut PrimaryBlock<'static> {
+    pub fn primary_mut(&mut self) -> &mut PrimaryBlock {
         &mut self.primary
     }
 
@@ -120,19 +122,13 @@ impl<S> Bundle<S> {
 
 impl<S: Retention> Bundle<S> {
     pub fn builder(
-        dest_eid: Eid<'_>,
-        src_node_id: Eid<'_>,
+        dest_eid: Eid,
+        src_node_id: Eid,
         lifetime: u64,
         payload: &[u8],
         retention: S,
     ) -> Result<builder::BundleBuilder<S>, Error> {
-        builder::BundleBuilder::new(
-            dest_eid.into_owned(),
-            src_node_id.into_owned(),
-            lifetime,
-            payload,
-            retention,
-        )
+        builder::BundleBuilder::new(dest_eid, src_node_id, lifetime, payload, retention)
     }
 
     pub fn from_bytes(data: &[u8], retention: S) -> Result<Self, Error> {

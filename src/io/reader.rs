@@ -55,7 +55,7 @@ pub enum BlockEvent {
 pub struct BundleReader<R, S: Retention> {
     dec: StreamDecoder<TeeReader<R, S>>,
     state: State,
-    primary: Option<PrimaryBlock<'static>>,
+    primary: Option<PrimaryBlock>,
     blocks: Vec<CanonicalBlock>,
     payload_idx: Option<usize>,
     payload_crc_type: u64,
@@ -129,7 +129,7 @@ impl<R: Read, S: Retention> BundleReader<R, S> {
         }
     }
 
-    pub fn primary(&self) -> Option<&PrimaryBlock<'static>> {
+    pub fn primary(&self) -> Option<&PrimaryBlock> {
         self.primary.as_ref()
     }
 

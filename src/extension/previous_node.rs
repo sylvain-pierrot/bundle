@@ -6,16 +6,16 @@ use crate::extension::Extension;
 
 /// Previous Node Block (RFC 9171 §4.4.1), block type 6.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PreviousNode<'a> {
-    pub node_id: Eid<'a>,
+pub struct PreviousNode {
+    pub node_id: Eid,
 }
 
-impl Extension for PreviousNode<'_> {
+impl Extension for PreviousNode {
     const BLOCK_TYPE: u64 = 6;
 
     fn parse(data: &[u8]) -> Result<Self, Error> {
         let mut dec = StreamDecoder::new(data);
-        let node_id = Eid::decode(&mut dec)?.into_owned();
+        let node_id = Eid::decode(&mut dec)?;
         Ok(PreviousNode { node_id })
     }
 

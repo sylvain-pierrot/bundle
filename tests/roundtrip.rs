@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use aqueduct::{
     BlockFlags, Bundle, BundleAge, BundleFlags, CanonicalBlock, Crc, CreationTimestamp, Eid,
     Extension, HopCount, MemoryRetention, PreviousNode,
@@ -114,7 +112,7 @@ fn roundtrip_with_extensions() {
 #[test]
 fn roundtrip_with_dtn_eids() {
     let bundle = Bundle::builder(
-        Eid::Dtn(Cow::Borrowed("//node1/incoming")),
+        Eid::Dtn("//node1/incoming".into()),
         Eid::Ipn {
             allocator_id: 0,
             node_number: 42,
@@ -132,7 +130,7 @@ fn roundtrip_with_dtn_eids() {
 
     assert_eq!(
         decoded.primary().dest_eid,
-        Eid::Dtn(Cow::Borrowed("//node1/incoming"))
+        Eid::Dtn("//node1/incoming".into())
     );
     assert_eq!(
         decoded.primary().src_node_id,
@@ -297,13 +295,6 @@ fn hop_count_exceeded() {
         }
         .exceeded()
     );
-}
-
-#[test]
-fn eid_into_owned() {
-    let eid = Eid::Dtn(Cow::Borrowed("//node1/svc"));
-    assert_eq!(eid.clone().into_owned(), eid);
-    assert_eq!(Eid::Null.into_owned(), Eid::Null);
 }
 
 #[test]
