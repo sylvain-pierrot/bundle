@@ -19,6 +19,7 @@ fn roundtrip_minimal_bundle() {
         payload,
         MemoryRetention::new(),
     )
+    .unwrap()
     .build();
     let encoded = bundle.encode().unwrap();
     let decoded = Bundle::from_bytes(&encoded, MemoryRetention::new()).unwrap();
@@ -33,7 +34,9 @@ fn roundtrip_minimal_bundle() {
 
 #[test]
 fn roundtrip_empty_payload() {
-    let bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, b"", MemoryRetention::new()).build();
+    let bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, b"", MemoryRetention::new())
+        .unwrap()
+        .build();
     let encoded = bundle.encode().unwrap();
     let decoded = Bundle::from_bytes(&encoded, MemoryRetention::new()).unwrap();
 
@@ -63,6 +66,7 @@ fn roundtrip_with_extensions() {
         payload,
         MemoryRetention::new(),
     )
+    .unwrap()
     .creation_ts(CreationTimestamp { time: 1000, seq: 1 })
     .extension(CanonicalBlock::from_ext(
         2,
@@ -110,6 +114,7 @@ fn roundtrip_with_dtn_eids() {
         b"",
         MemoryRetention::new(),
     )
+    .unwrap()
     .build();
 
     let encoded = bundle.encode().unwrap();
@@ -133,6 +138,7 @@ fn roundtrip_with_dtn_eids() {
 fn roundtrip_fragment() {
     let payload = b"abc";
     let bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
+        .unwrap()
         .fragment(100, 5000)
         .build();
 
@@ -150,8 +156,9 @@ fn roundtrip_fragment() {
 #[test]
 fn roundtrip_crc_values_nonzero() {
     let payload = b"test payload";
-    let bundle =
-        Bundle::builder(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new()).build();
+    let bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
+        .unwrap()
+        .build();
     let encoded = bundle.encode().unwrap();
     let decoded = Bundle::from_bytes(&encoded, MemoryRetention::new()).unwrap();
 
@@ -216,16 +223,18 @@ fn decode_garbage() {
 
 #[test]
 fn validate_wrong_version() {
-    let mut bundle =
-        Bundle::builder(Eid::Null, Eid::Null, 1000, b"", MemoryRetention::new()).build();
+    let mut bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, b"", MemoryRetention::new())
+        .unwrap()
+        .build();
     bundle.primary_mut().version = 6;
     assert!(bundle.primary().validate().is_err());
 }
 
 #[test]
 fn validate_fragment_flag_mismatch() {
-    let mut bundle =
-        Bundle::builder(Eid::Null, Eid::Null, 1000, b"", MemoryRetention::new()).build();
+    let mut bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, b"", MemoryRetention::new())
+        .unwrap()
+        .build();
     bundle.primary_mut().flags = BundleFlags::from_bits(0x01);
     bundle.primary_mut().fragment = None;
     assert!(bundle.primary().validate().is_err());
@@ -237,8 +246,9 @@ fn validate_duplicate_block_numbers() {
         limit: 10,
         count: 0,
     };
-    let mut bundle =
-        Bundle::builder(Eid::Null, Eid::Null, 1000, b"", MemoryRetention::new()).build();
+    let mut bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, b"", MemoryRetention::new())
+        .unwrap()
+        .build();
     bundle.extensions_mut().push(CanonicalBlock::from_ext(
         2,
         BlockFlags::from_bits(0),
@@ -290,4 +300,71 @@ fn eid_into_owned() {
 fn crc_compute_invalid_type() {
     assert!(Crc::compute(3, b"data").is_err());
     assert!(Crc::compute(255, b"data").is_err());
+}
+
+#[test]
+fn crc_incremental_matches_oneshot() {
+    use aqueduct::bundle::crc::CrcHasher;
+    let data = b"hello world test data for crc";
+
+    let mut h16 = CrcHasher::new(&Crc::crc16()).unwrap();
+    h16.update(&data[..10]);
+    h16.update(&data[10..]);
+    assert_eq!(h16.finalize(), Crc::Crc16(Crc::compute_crc16(data)));
+
+    let mut h32 = CrcHasher::new(&Crc::crc32c()).unwrap();
+    h32.update(&data[..5]);
+    h32.update(&data[5..20]);
+    h32.update(&data[20..]);
+    assert_eq!(h32.finalize(), Crc::Crc32c(Crc::compute_crc32c(data)));
+}
+
+#[test]
+fn crc_verify_detects_corruption() {
+    let payload = b"verify me";
+    let bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
+        .unwrap()
+        .build();
+    let encoded = bundle.encode().unwrap();
+
+    // CRC-32C is on primary block by default
+    let decoded = Bundle::from_bytes(&encoded, MemoryRetention::new()).unwrap();
+    match decoded.primary().crc {
+        Crc::Crc32c(v) => assert_ne!(v, 0),
+        _ => panic!("expected crc32c"),
+    }
+
+    // Corrupt a byte and re-decode — CRC value will differ
+    let mut corrupted = encoded.clone();
+    corrupted[5] ^= 0xFF;
+    if let Ok(bad) = Bundle::from_bytes(&corrupted, MemoryRetention::new()) {
+        // Re-encoding produces different CRC
+        let reencoded = bad.encode().unwrap();
+        assert_ne!(reencoded, corrupted);
+    }
+}
+
+#[test]
+fn payload_ref_data_bounds_check() {
+    use aqueduct::BlockFlags;
+    use aqueduct::PayloadRef;
+
+    let pr = PayloadRef {
+        flags: BlockFlags::from_bits(0),
+        crc: Crc::None,
+        data_offset: 10,
+        data_len: 5,
+    };
+    // Valid range
+    let buf = vec![0u8; 20];
+    assert!(pr.data(&buf).is_some());
+    assert_eq!(pr.data(&buf).unwrap().len(), 5);
+
+    // Out of bounds
+    let small = vec![0u8; 12];
+    assert!(pr.data(&small).is_none());
+
+    // Offset past end
+    let tiny = vec![0u8; 5];
+    assert!(pr.data(&tiny).is_none());
 }

@@ -142,12 +142,27 @@ impl Crc {
         }
     }
 
-    /// Encode the CRC value as a CBOR byte string.
-    pub fn value_bytes(&self) -> Option<Vec<u8>> {
+    /// CRC value size in bytes (0 for None, 2 for CRC-16, 4 for CRC-32C).
+    pub fn value_size(&self) -> usize {
         match self {
-            Crc::None => None,
-            Crc::Crc16(v) => Some(v.to_be_bytes().to_vec()),
-            Crc::Crc32c(v) => Some(v.to_be_bytes().to_vec()),
+            Crc::None => 0,
+            Crc::Crc16(_) => 2,
+            Crc::Crc32c(_) => 4,
+        }
+    }
+
+    /// Write CRC value bytes into `buf`. Returns number of bytes written.
+    pub fn write_value(&self, buf: &mut [u8]) -> usize {
+        match self {
+            Crc::None => 0,
+            Crc::Crc16(v) => {
+                buf[..2].copy_from_slice(&v.to_be_bytes());
+                2
+            }
+            Crc::Crc32c(v) => {
+                buf[..4].copy_from_slice(&v.to_be_bytes());
+                4
+            }
         }
     }
 }

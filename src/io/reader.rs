@@ -54,8 +54,7 @@ pub enum BlockEvent {
 ///  into_bundle() → Bundle<S>
 /// ```
 pub struct BundleReader<R, S: Retention> {
-    dec: StreamDecoder<TeeReader<R, S::Writer>>,
-    retention: S,
+    dec: StreamDecoder<TeeReader<R, S>>,
     state: State,
     primary: Option<PrimaryBlock<'static>>,
     extensions: Vec<CanonicalBlock>,
@@ -65,15 +64,14 @@ pub struct BundleReader<R, S: Retention> {
     payload_data_offset: u64,
     payload_len: u64,
     payload_remaining: u64,
+    has_payload: bool,
 }
 
 impl<R: Read, S: Retention> BundleReader<R, S> {
-    pub fn new(source: R, retention: S) -> Result<Self, Error> {
-        let writer = retention.writer().map_err(aqueduct_cbor::Error::from)?;
-        let tee = TeeReader::new(source, writer);
-        Ok(BundleReader {
+    pub fn new(source: R, retention: S) -> Self {
+        let tee = TeeReader::new(source, retention);
+        BundleReader {
             dec: StreamDecoder::new(tee),
-            retention,
             state: State::Initial,
             primary: None,
             extensions: Vec::new(),
@@ -83,7 +81,8 @@ impl<R: Read, S: Retention> BundleReader<R, S> {
             payload_data_offset: 0,
             payload_len: 0,
             payload_remaining: 0,
-        })
+            has_payload: false,
+        }
     }
 
     pub fn next_block(&mut self) -> Result<Option<BlockEvent>, Error> {
@@ -117,6 +116,9 @@ impl<R: Read, S: Retention> BundleReader<R, S> {
         let block_type = self.dec.read_uint()?;
 
         if block_type == 1 {
+            if self.has_payload {
+                return Err(Error::InvalidPayloadCount(2));
+            }
             if array_len != 5 && array_len != 6 {
                 return Err(Error::InvalidCbor);
             }
@@ -126,6 +128,7 @@ impl<R: Read, S: Retention> BundleReader<R, S> {
             self.payload_len = self.dec.read_bstr_header()?;
             self.payload_data_offset = self.dec.position();
             self.payload_remaining = self.payload_len;
+            self.has_payload = true;
             self.state = State::PayloadData;
             Ok(Some(BlockEvent::Payload {
                 len: self.payload_len,
@@ -191,6 +194,8 @@ impl<R: Read, S: Retention> BundleReader<R, S> {
 
         let primary = self.primary.ok_or(Error::InvalidPayloadCount(0))?;
 
+        let (_source, retention) = self.dec.into_inner().into_parts();
+
         Ok(Bundle::from_parts(
             primary,
             self.extensions,
@@ -200,7 +205,7 @@ impl<R: Read, S: Retention> BundleReader<R, S> {
                 data_offset: self.payload_data_offset,
                 data_len: self.payload_len,
             },
-            self.retention,
+            retention,
         ))
     }
 }

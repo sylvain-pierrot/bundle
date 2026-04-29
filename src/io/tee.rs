@@ -12,6 +12,10 @@ impl<R, W> TeeReader<R, W> {
     pub fn new(reader: R, writer: W) -> Self {
         Self { reader, writer }
     }
+
+    pub fn into_parts(self) -> (R, W) {
+        (self.reader, self.writer)
+    }
 }
 
 impl<R: Read, W: Write> Read for TeeReader<R, W> {

@@ -45,8 +45,10 @@ pub(crate) fn decode_eid<R: Read>(dec: &mut StreamDecoder<R>) -> Result<Eid<'sta
                     }
                 }
                 3 => {
-                    let allocator_id = dec.read_uint()? as u32;
-                    let node_number = dec.read_uint()? as u32;
+                    let raw_alloc = dec.read_uint()?;
+                    let raw_node = dec.read_uint()?;
+                    let allocator_id = u32::try_from(raw_alloc).map_err(|_| Error::InvalidCbor)?;
+                    let node_number = u32::try_from(raw_node).map_err(|_| Error::InvalidCbor)?;
                     let service_number = dec.read_uint()?;
                     if allocator_id == 0 && node_number == 0 && service_number == 0 {
                         Ok(Eid::Null)

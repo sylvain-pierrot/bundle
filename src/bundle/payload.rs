@@ -17,7 +17,8 @@ pub struct PayloadRef {
 
 impl PayloadRef {
     /// Extract the payload data from the source buffer.
-    pub fn data<'a>(&self, source: &'a [u8]) -> &'a [u8] {
-        &source[self.data_offset as usize..][..self.data_len as usize]
+    pub fn data<'a>(&self, source: &'a [u8]) -> Option<&'a [u8]> {
+        let start = self.data_offset as usize;
+        source.get(start..start.checked_add(self.data_len as usize)?)
     }
 }

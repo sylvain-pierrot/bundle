@@ -32,7 +32,7 @@ impl<R: Retention> Bundle<R> {
         lifetime: u64,
         payload: &[u8],
         retention: R,
-    ) -> builder::BundleBuilder<R> {
+    ) -> Result<builder::BundleBuilder<R>, Error> {
         builder::BundleBuilder::new(
             dest_eid.into_owned(),
             src_node_id.into_owned(),
@@ -47,7 +47,7 @@ impl<R: Retention> Bundle<R> {
     }
 
     pub fn from_stream<S: Read>(source: S, retention: R) -> Result<Self, Error> {
-        BundleReader::new(source, retention)?.into_bundle()
+        BundleReader::new(source, retention).into_bundle()
     }
 
     pub(crate) fn from_parts(
@@ -88,7 +88,7 @@ impl<R: Retention> Bundle<R> {
         &self.retention
     }
 
-    pub fn payload_reader(&self) -> std::io::Result<R::Reader<'_>> {
+    pub fn payload_reader(&self) -> R::Reader<'_> {
         self.retention
             .reader(self.payload.data_offset, self.payload.data_len)
     }
@@ -104,7 +104,6 @@ impl<R: Retention> Bundle<R> {
     pub fn encode(&self) -> Result<Vec<u8>, Error> {
         let mut payload_data = Vec::with_capacity(self.payload.data_len as usize);
         self.payload_reader()
-            .map_err(aqueduct_cbor::Error::from)?
             .read_to_end(&mut payload_data)
             .map_err(aqueduct_cbor::Error::from)?;
 

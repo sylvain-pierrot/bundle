@@ -28,13 +28,13 @@ impl<S: Retention> BundleBuilder<S> {
         src_node_id: Eid<'static>,
         lifetime: u64,
         payload: &[u8],
-        retention: S,
-    ) -> Self {
+        mut retention: S,
+    ) -> Result<Self, crate::error::Error> {
         let payload_len = payload.len() as u64;
-        if let Ok(mut w) = retention.writer() {
-            let _ = std::io::Write::write_all(&mut w, payload);
-        }
-        Self {
+        retention
+            .write_all(payload)
+            .map_err(aqueduct_cbor::Error::from)?;
+        Ok(Self {
             dest_eid,
             src_node_id,
             lifetime,
@@ -45,7 +45,7 @@ impl<S: Retention> BundleBuilder<S> {
             fragment: None,
             extensions: Vec::new(),
             retention,
-        }
+        })
     }
 
     pub fn is_admin_record(mut self) -> Self {

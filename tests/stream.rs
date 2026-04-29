@@ -31,7 +31,7 @@ fn stream_roundtrip_minimal() {
     writer.finish().unwrap();
 
     // Step-by-step reading
-    let mut reader = BundleReader::new(buf.as_slice(), aqueduct::MemoryRetention::new()).unwrap();
+    let mut reader = BundleReader::new(buf.as_slice(), aqueduct::MemoryRetention::new());
 
     let mut read_payload = Vec::new();
     while let Some(event) = reader.next_block().unwrap() {
@@ -83,7 +83,7 @@ fn stream_roundtrip_with_crc() {
     writer.end_payload().unwrap();
     writer.finish().unwrap();
 
-    let mut reader = BundleReader::new(buf.as_slice(), aqueduct::MemoryRetention::new()).unwrap();
+    let mut reader = BundleReader::new(buf.as_slice(), aqueduct::MemoryRetention::new());
 
     let mut read_payload = Vec::new();
     while let Some(event) = reader.next_block().unwrap() {
@@ -136,7 +136,7 @@ fn stream_roundtrip_with_extensions() {
     writer.end_payload().unwrap();
     writer.finish().unwrap();
 
-    let mut reader = BundleReader::new(buf.as_slice(), aqueduct::MemoryRetention::new()).unwrap();
+    let mut reader = BundleReader::new(buf.as_slice(), aqueduct::MemoryRetention::new());
 
     let mut ext_count = 0;
     while let Some(event) = reader.next_block().unwrap() {
@@ -179,7 +179,7 @@ fn stream_walk() {
     writer.end_payload().unwrap();
     writer.finish().unwrap();
 
-    let mut reader = BundleReader::new(buf.as_slice(), aqueduct::MemoryRetention::new()).unwrap();
+    let mut reader = BundleReader::new(buf.as_slice(), aqueduct::MemoryRetention::new());
 
     while let Some(event) = reader.next_block().unwrap() {
         match event {
@@ -262,8 +262,7 @@ fn stream_forwarding_pattern() {
     w.finish().unwrap();
 
     // Forward: read step-by-step, add hop count, stream payload through
-    let mut reader =
-        BundleReader::new(original.as_slice(), aqueduct::MemoryRetention::new()).unwrap();
+    let mut reader = BundleReader::new(original.as_slice(), aqueduct::MemoryRetention::new());
 
     let mut forwarded = Vec::new();
     let mut writer = BundleWriter::new(&mut forwarded).unwrap();
@@ -309,8 +308,7 @@ fn stream_forwarding_pattern() {
     writer.finish().unwrap();
 
     // Verify forwarded bundle
-    let mut reader2 =
-        BundleReader::new(forwarded.as_slice(), aqueduct::MemoryRetention::new()).unwrap();
+    let mut reader2 = BundleReader::new(forwarded.as_slice(), aqueduct::MemoryRetention::new());
     let mut ext_count = 0;
     let mut fwd_payload = Vec::new();
     while let Some(event) = reader2.next_block().unwrap() {
@@ -343,6 +341,7 @@ fn retention_from_bytes_roundtrip() {
         payload,
         aqueduct::MemoryRetention::new(),
     )
+    .unwrap()
     .build();
 
     let encoded = bundle.encode().unwrap();
@@ -350,11 +349,7 @@ fn retention_from_bytes_roundtrip() {
 
     // Read payload back from retention
     let mut buf = Vec::new();
-    decoded
-        .payload_reader()
-        .unwrap()
-        .read_to_end(&mut buf)
-        .unwrap();
+    decoded.payload_reader().read_to_end(&mut buf).unwrap();
     assert_eq!(buf, payload);
 
     // Re-encode from retention
@@ -376,6 +371,7 @@ fn retention_from_stream_roundtrip() {
         payload,
         aqueduct::MemoryRetention::new(),
     )
+    .unwrap()
     .build();
 
     let encoded = bundle.encode().unwrap();
@@ -395,11 +391,7 @@ fn retention_from_stream_roundtrip() {
     );
 
     let mut buf = Vec::new();
-    decoded
-        .payload_reader()
-        .unwrap()
-        .read_to_end(&mut buf)
-        .unwrap();
+    decoded.payload_reader().read_to_end(&mut buf).unwrap();
     assert_eq!(buf, payload);
 }
 
@@ -413,14 +405,70 @@ fn retention_builder_payload_reader() {
         payload,
         aqueduct::MemoryRetention::new(),
     )
+    .unwrap()
     .build();
 
     // payload_reader works immediately after build (no encode/decode cycle)
     let mut buf = Vec::new();
-    bundle
-        .payload_reader()
-        .unwrap()
-        .read_to_end(&mut buf)
-        .unwrap();
+    bundle.payload_reader().read_to_end(&mut buf).unwrap();
     assert_eq!(buf, payload);
+}
+
+#[test]
+fn writer_rejects_excess_payload() {
+    let mut buf = Vec::new();
+    let mut writer = BundleWriter::new(&mut buf).unwrap();
+    writer
+        .write_primary(&PrimaryBlock {
+            version: 7,
+            flags: aqueduct::BundleFlags::from_bits(0),
+            crc: Crc::None,
+            dest_eid: Eid::Null,
+            src_node_id: Eid::Null,
+            rpt_eid: Eid::Null,
+            creation_ts: CreationTimestamp { time: 0, seq: 0 },
+            lifetime: 1000,
+            fragment: None,
+        })
+        .unwrap();
+    writer
+        .begin_payload(BlockFlags::from_bits(0), Crc::None, 5)
+        .unwrap();
+    assert!(writer.write_payload_data(b"too long data").is_err());
+}
+
+#[test]
+fn reader_walk_partial() {
+    let primary = PrimaryBlock {
+        version: 7,
+        flags: aqueduct::BundleFlags::from_bits(0),
+        crc: Crc::None,
+        dest_eid: Eid::Null,
+        src_node_id: Eid::Null,
+        rpt_eid: Eid::Null,
+        creation_ts: CreationTimestamp { time: 0, seq: 0 },
+        lifetime: 1000,
+        fragment: None,
+    };
+
+    let mut buf = Vec::new();
+    let mut writer = BundleWriter::new(&mut buf).unwrap();
+    writer.write_primary(&primary).unwrap();
+    writer
+        .begin_payload(BlockFlags::from_bits(0), Crc::None, 100)
+        .unwrap();
+    writer.write_payload_data(&[0xAA; 100]).unwrap();
+    writer.end_payload().unwrap();
+    writer.finish().unwrap();
+
+    let mut reader = BundleReader::new(buf.as_slice(), aqueduct::MemoryRetention::new());
+
+    while let Some(event) = reader.next_block().unwrap() {
+        if let BlockEvent::Payload { .. } = event {
+            reader.walk(50).unwrap();
+            reader.walk(50).unwrap();
+        }
+    }
+    let bundle = reader.into_bundle().unwrap();
+    assert_eq!(bundle.payload().data_len, 100);
 }
