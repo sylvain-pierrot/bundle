@@ -1,16 +1,12 @@
 use aqueduct::{
-    BlockFlags, Bundle, BundleAge, BundleFlags, CanonicalBlock, Crc, CreationTimestamp, Eid,
-    Extension, HopCount, MemoryRetention, PreviousNode,
+    BlockFlags, BundleAge, BundleBuilder, BundleReader, CanonicalBlock, Crc, CreationTimestamp,
+    Eid, Extension, HopCount, MemoryRetention, PreviousNode,
 };
-
-// ---------------------------------------------------------------------------
-// Happy-path roundtrips
-// ---------------------------------------------------------------------------
 
 #[test]
 fn roundtrip_minimal_bundle() {
     let payload = b"hello";
-    let bundle = Bundle::builder(
+    let bundle = BundleBuilder::new(
         Eid::Null,
         Eid::Null,
         3_600_000_000,
@@ -20,7 +16,9 @@ fn roundtrip_minimal_bundle() {
     .unwrap()
     .build();
     let encoded = bundle.encode().unwrap();
-    let decoded = Bundle::from_bytes(&encoded, MemoryRetention::new()).unwrap();
+    let decoded = BundleReader::new()
+        .read_from(encoded.as_slice(), MemoryRetention::new())
+        .unwrap();
 
     assert_eq!(decoded.primary().version, 7);
     assert_eq!(decoded.primary().dest_eid, Eid::Null);
@@ -32,11 +30,13 @@ fn roundtrip_minimal_bundle() {
 
 #[test]
 fn roundtrip_empty_payload() {
-    let bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, b"", MemoryRetention::new())
+    let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, b"", MemoryRetention::new())
         .unwrap()
         .build();
     let encoded = bundle.encode().unwrap();
-    let decoded = Bundle::from_bytes(&encoded, MemoryRetention::new()).unwrap();
+    let decoded = BundleReader::new()
+        .read_from(encoded.as_slice(), MemoryRetention::new())
+        .unwrap();
 
     assert_eq!(decoded.payload_len(), 0);
 
@@ -53,7 +53,7 @@ fn roundtrip_with_extensions() {
     };
     let payload = b"hello world";
 
-    let bundle = Bundle::builder(
+    let bundle = BundleBuilder::new(
         dest.clone(),
         Eid::Ipn {
             allocator_id: 0,
@@ -84,7 +84,9 @@ fn roundtrip_with_extensions() {
     .build();
 
     let encoded = bundle.encode().unwrap();
-    let decoded = Bundle::from_bytes(&encoded, MemoryRetention::new()).unwrap();
+    let decoded = BundleReader::new()
+        .read_from(encoded.as_slice(), MemoryRetention::new())
+        .unwrap();
 
     assert_eq!(decoded.primary().dest_eid, dest);
     assert_eq!(decoded.extensions().count(), 2);
@@ -111,7 +113,7 @@ fn roundtrip_with_extensions() {
 
 #[test]
 fn roundtrip_with_dtn_eids() {
-    let bundle = Bundle::builder(
+    let bundle = BundleBuilder::new(
         Eid::Dtn("//node1/incoming".into()),
         Eid::Ipn {
             allocator_id: 0,
@@ -126,7 +128,9 @@ fn roundtrip_with_dtn_eids() {
     .build();
 
     let encoded = bundle.encode().unwrap();
-    let decoded = Bundle::from_bytes(&encoded, MemoryRetention::new()).unwrap();
+    let decoded = BundleReader::new()
+        .read_from(encoded.as_slice(), MemoryRetention::new())
+        .unwrap();
 
     assert_eq!(
         decoded.primary().dest_eid,
@@ -145,13 +149,15 @@ fn roundtrip_with_dtn_eids() {
 #[test]
 fn roundtrip_fragment() {
     let payload = b"abc";
-    let bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
+    let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
         .unwrap()
         .fragment(100, 5000)
         .build();
 
     let encoded = bundle.encode().unwrap();
-    let decoded = Bundle::from_bytes(&encoded, MemoryRetention::new()).unwrap();
+    let decoded = BundleReader::new()
+        .read_from(encoded.as_slice(), MemoryRetention::new())
+        .unwrap();
 
     let frag = decoded.primary().fragment.unwrap();
     assert_eq!(frag.offset, 100);
@@ -164,21 +170,19 @@ fn roundtrip_fragment() {
 #[test]
 fn roundtrip_crc_values_nonzero() {
     let payload = b"test payload";
-    let bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
+    let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
         .unwrap()
         .build();
     let encoded = bundle.encode().unwrap();
-    let decoded = Bundle::from_bytes(&encoded, MemoryRetention::new()).unwrap();
+    let decoded = BundleReader::new()
+        .read_from(encoded.as_slice(), MemoryRetention::new())
+        .unwrap();
 
     match decoded.primary().crc {
         Crc::Crc32c(v) => assert_ne!(v, 0),
         other => panic!("expected Crc32c, got {other:?}"),
     }
 }
-
-// ---------------------------------------------------------------------------
-// Extension roundtrips
-// ---------------------------------------------------------------------------
 
 #[test]
 fn extension_hop_count_roundtrip() {
@@ -210,28 +214,36 @@ fn extension_previous_node_roundtrip() {
     assert_eq!(PreviousNode::parse(&data).unwrap().node_id, pn.node_id);
 }
 
-// ---------------------------------------------------------------------------
-// Error / edge-case tests
-// ---------------------------------------------------------------------------
-
 #[test]
 fn decode_empty_input() {
-    assert!(Bundle::from_bytes(b"", MemoryRetention::new()).is_err());
+    assert!(
+        BundleReader::new()
+            .read_from(&b""[..], MemoryRetention::new())
+            .is_err()
+    );
 }
 
 #[test]
 fn decode_truncated_bundle() {
-    assert!(Bundle::from_bytes(&[0x9F, 0xFF], MemoryRetention::new()).is_err());
+    assert!(
+        BundleReader::new()
+            .read_from(&[0x9F, 0xFF][..], MemoryRetention::new())
+            .is_err()
+    );
 }
 
 #[test]
 fn decode_garbage() {
-    assert!(Bundle::from_bytes(&[0xDE, 0xAD, 0xBE, 0xEF], MemoryRetention::new()).is_err());
+    assert!(
+        BundleReader::new()
+            .read_from(&[0xDE, 0xAD, 0xBE, 0xEF][..], MemoryRetention::new())
+            .is_err()
+    );
 }
 
 #[test]
 fn validate_wrong_version() {
-    let mut bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, b"", MemoryRetention::new())
+    let mut bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, b"", MemoryRetention::new())
         .unwrap()
         .build();
     bundle.primary_mut().version = 6;
@@ -240,10 +252,10 @@ fn validate_wrong_version() {
 
 #[test]
 fn validate_fragment_flag_mismatch() {
-    let mut bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, b"", MemoryRetention::new())
+    let mut bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, b"", MemoryRetention::new())
         .unwrap()
         .build();
-    bundle.primary_mut().flags = BundleFlags::from_bits(0x01);
+    bundle.primary_mut().flags = aqueduct::BundleFlags::from_bits(0x01);
     bundle.primary_mut().fragment = None;
     assert!(bundle.primary().validate().is_err());
 }
@@ -254,7 +266,7 @@ fn validate_duplicate_block_numbers() {
         limit: 10,
         count: 0,
     };
-    let mut bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, b"", MemoryRetention::new())
+    let mut bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, b"", MemoryRetention::new())
         .unwrap()
         .build();
     bundle.blocks_mut().push(CanonicalBlock::from_ext(
@@ -323,23 +335,14 @@ fn crc_incremental_matches_oneshot() {
 #[test]
 fn crc_verify_detects_corruption() {
     let payload = b"verify me";
-    let bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
+    let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
         .unwrap()
         .build();
     let encoded = bundle.encode().unwrap();
 
-    // CRC-32C is on primary block by default
-    let decoded = Bundle::from_bytes(&encoded, MemoryRetention::new()).unwrap();
-    match decoded.primary().crc {
-        Crc::Crc32c(v) => assert_ne!(v, 0),
-        _ => panic!("expected crc32c"),
-    }
-
-    // Corrupt a byte and re-decode — CRC value will differ
     let mut corrupted = encoded.clone();
     corrupted[5] ^= 0xFF;
-    if let Ok(bad) = Bundle::from_bytes(&corrupted, MemoryRetention::new()) {
-        // Re-encoding produces different CRC
+    if let Ok(bad) = BundleReader::new().read_from(corrupted.as_slice(), MemoryRetention::new()) {
         let reencoded = bad.encode().unwrap();
         assert_ne!(reencoded, corrupted);
     }

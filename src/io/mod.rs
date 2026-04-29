@@ -1,12 +1,14 @@
 //! Streaming bundle I/O.
 
+#[cfg(feature = "async")]
+mod async_reader;
 mod reader;
-pub mod retention;
 pub(crate) mod tee;
 mod writer;
 
-pub use reader::{BlockEvent, BundleReader, PayloadReader};
 #[cfg(feature = "async")]
-pub use retention::AsyncRetention;
-pub use retention::{DiskRetention, MemoryRetention, Retention};
+pub use crate::retention::AsyncRetention;
+#[cfg(feature = "async")]
+pub use async_reader::BundleAsyncReader;
+pub use reader::{BlockEvent, BundleReader, OpenBundleReader, PayloadReader};
 pub use writer::BundleWriter;

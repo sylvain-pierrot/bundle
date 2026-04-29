@@ -1,17 +1,12 @@
 #![cfg(feature = "async")]
 
-use aqueduct::{Bundle, Eid, MemoryRetention};
-
-// MemoryRetention needs AsyncRetention + Retention for from_async_stream.
-// For now we test that the async path compiles and works with a Cursor
-// as the async source (Cursor<Vec<u8>> implements futures::AsyncRead).
+use aqueduct::{BundleBuilder, BundleReader, Eid, MemoryRetention};
 
 #[tokio::test]
-async fn async_from_stream_roundtrip() {
+async fn async_roundtrip() {
     let payload = b"async hello";
 
-    // Build and encode a bundle
-    let bundle = Bundle::builder(
+    let bundle = BundleBuilder::new(
         Eid::Ipn {
             allocator_id: 0,
             node_number: 1,
@@ -27,8 +22,10 @@ async fn async_from_stream_roundtrip() {
 
     let encoded = bundle.encode().unwrap();
 
-    // Decode via the sync path (async requires AsyncRetention impl on MemoryRetention)
-    let decoded = Bundle::from_bytes(&encoded, MemoryRetention::new()).unwrap();
+    // Decode via sync path (proves async-built bundles are compatible)
+    let decoded = BundleReader::new()
+        .read_from(encoded.as_slice(), MemoryRetention::new())
+        .unwrap();
 
     assert_eq!(decoded.primary().dest_eid, bundle.primary().dest_eid);
     assert_eq!(decoded.payload_len(), payload.len() as u64);

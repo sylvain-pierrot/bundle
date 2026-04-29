@@ -33,10 +33,16 @@ impl Retention for MemoryRetention {
     type Reader<'a> = &'a [u8];
 
     fn reader(&self, offset: u64, len: u64) -> std::io::Result<Self::Reader<'_>> {
-        let start = offset as usize;
-        let end = start.checked_add(len as usize).ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset + len overflow")
+        let start = usize::try_from(offset).map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset overflows usize")
         })?;
+        let end = start
+            .checked_add(usize::try_from(len).map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "len overflows usize")
+            })?)
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset + len overflow")
+            })?;
         if end > self.data.len() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,

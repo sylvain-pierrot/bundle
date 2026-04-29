@@ -7,7 +7,7 @@ use crate::bundle::canonical::{
 use crate::bundle::crc::Crc;
 use crate::bundle::primary::{BundleFlags, CreationTimestamp, FragmentInfo, PrimaryBlock};
 use crate::eid::Eid;
-use crate::io::retention::Retention;
+use crate::retention::Retention;
 
 /// Fluent builder for [`Bundle`].
 pub struct BundleBuilder<S> {
@@ -24,7 +24,7 @@ pub struct BundleBuilder<S> {
 }
 
 impl<S: Retention> BundleBuilder<S> {
-    pub(crate) fn new(
+    pub fn new(
         dest_eid: Eid,
         src_node_id: Eid,
         lifetime: u64,

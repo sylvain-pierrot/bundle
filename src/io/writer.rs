@@ -40,6 +40,9 @@ impl<W: Write> BundleWriter<W> {
     }
 
     pub fn write_primary(&mut self, primary: &PrimaryBlock) -> Result<(), Error> {
+        if self.state != State::Init {
+            return Err(Error::IncompleteRead);
+        }
         let mut buf = Encoder::new();
         primary.encode(&mut buf);
         self.enc.write_raw(buf.as_bytes())?;
@@ -48,6 +51,9 @@ impl<W: Write> BundleWriter<W> {
     }
 
     pub fn write_extension(&mut self, block: &CanonicalBlock) -> Result<(), Error> {
+        if self.state != State::Blocks {
+            return Err(Error::IncompleteRead);
+        }
         let mut buf = Encoder::new();
         block.encode(&mut buf);
         self.enc.write_raw(buf.as_bytes())?;
@@ -60,6 +66,9 @@ impl<W: Write> BundleWriter<W> {
         crc: Crc,
         data_len: u64,
     ) -> Result<(), Error> {
+        if self.state != State::Blocks {
+            return Err(Error::IncompleteRead);
+        }
         let has_crc = !crc.is_none();
 
         let mut header = Encoder::new();
@@ -84,6 +93,9 @@ impl<W: Write> BundleWriter<W> {
     }
 
     pub fn write_payload_data(&mut self, data: &[u8]) -> Result<(), Error> {
+        if self.state != State::Payload {
+            return Err(Error::PayloadNotConsumed);
+        }
         let len = data.len() as u64;
         if len > self.payload_remaining {
             return Err(Error::PayloadOverflow);
@@ -97,11 +109,13 @@ impl<W: Write> BundleWriter<W> {
     }
 
     pub fn end_payload(&mut self) -> Result<(), Error> {
+        if self.state != State::Payload {
+            return Err(Error::PayloadNotConsumed);
+        }
         if let Some(mut hasher) = self.payload_hasher.take() {
             let crc_size = self.payload_crc.value_size();
-            // CBOR bstr header (1 byte) + zeroed CRC value
-            let mut zeroed = [0u8; 5]; // max: 1 header + 4 value
-            zeroed[0] = 0x40 | crc_size as u8; // CBOR bstr major type 2, length < 24
+            let mut zeroed = [0u8; 5];
+            zeroed[0] = 0x40 | crc_size as u8;
             hasher.update(&zeroed[..1 + crc_size]);
 
             let computed = hasher.finalize();
@@ -113,10 +127,13 @@ impl<W: Write> BundleWriter<W> {
         Ok(())
     }
 
-    pub fn finish(mut self) -> Result<W, Error> {
-        self.enc.write_break()?;
-        self.enc.flush()?;
-        self.state = State::Done;
-        Ok(self.enc.into_inner())
+    pub fn finish(self) -> Result<W, Error> {
+        if self.state == State::Payload {
+            return Err(Error::PayloadNotConsumed);
+        }
+        let mut enc = self.enc;
+        enc.write_break()?;
+        enc.flush()?;
+        Ok(enc.into_inner())
     }
 }

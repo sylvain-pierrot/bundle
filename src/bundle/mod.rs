@@ -4,33 +4,21 @@ pub mod crc;
 pub mod primary;
 
 use std::io::Read;
-#[cfg(feature = "async")]
-use std::pin::Pin;
-#[cfg(feature = "async")]
-use std::task::Poll;
 
 use aqueduct_cbor::{Encoder, ToCbor};
-#[cfg(feature = "async")]
-use futures_io::AsyncRead;
 
 use canonical::{BlockData, CanonicalBlock};
 use crc::Crc;
 use primary::PrimaryBlock;
 
-use crate::eid::Eid;
 use crate::error::Error;
-use crate::io::BundleReader;
-#[cfg(feature = "async")]
-use crate::io::retention::AsyncRetention;
-use crate::io::retention::{NoopRetention, Retention};
+use crate::retention::Retention;
 
 /// A BPv7 bundle (RFC 9171 §4.1).
 ///
-/// A bundle is a primary block followed by canonical blocks (extensions
-/// and exactly one payload block). The full wire-format bytes are stored
-/// in the retention backend — a write-once recovery point. Modifications
-/// happen in memory on the block structs; the retention is never modified
-/// after reception.
+/// Pure data — holds metadata in memory and a retention backend for
+/// the wire bytes. Constructed via [`BundleReader`](crate::BundleReader)
+/// or [`BundleBuilder`](crate::BundleBuilder). Never constructed directly.
 #[derive(Debug, Clone)]
 pub struct Bundle<S> {
     primary: PrimaryBlock,
@@ -47,6 +35,14 @@ impl<S> Bundle<S> {
         Bundle {
             primary,
             blocks,
+            retention,
+        }
+    }
+
+    pub(crate) fn swap_retention<T>(self, retention: T) -> Bundle<T> {
+        Bundle {
+            primary: self.primary,
+            blocks: self.blocks,
             retention,
         }
     }
@@ -121,78 +117,6 @@ impl<S> Bundle<S> {
 }
 
 impl<S: Retention> Bundle<S> {
-    pub fn builder(
-        dest_eid: Eid,
-        src_node_id: Eid,
-        lifetime: u64,
-        payload: &[u8],
-        retention: S,
-    ) -> Result<builder::BundleBuilder<S>, Error> {
-        builder::BundleBuilder::new(dest_eid, src_node_id, lifetime, payload, retention)
-    }
-
-    pub fn from_bytes(data: &[u8], retention: S) -> Result<Self, Error> {
-        Self::from_stream(data, retention)
-    }
-
-    pub fn from_stream<R: Read>(source: R, retention: S) -> Result<Self, Error> {
-        BundleReader::new(source, retention).into_bundle()
-    }
-
-    /// Receive a bundle from an async source.
-    #[cfg(feature = "async")]
-    pub async fn from_async_stream<R>(mut source: R, mut retention: S) -> Result<Self, Error>
-    where
-        R: AsyncRead + Unpin,
-        S: AsyncRetention,
-    {
-        let mut total = 0u64;
-        let mut buf = [0u8; 65536];
-        loop {
-            let n: usize = std::future::poll_fn(|cx| -> Poll<std::io::Result<usize>> {
-                Pin::new(&mut source).poll_read(cx, &mut buf)
-            })
-            .await
-            .map_err(|e| Error::Cbor(aqueduct_cbor::Error::from(e)))?;
-            if n == 0 {
-                break;
-            }
-            let mut remaining = &buf[..n];
-            while !remaining.is_empty() {
-                let w: usize = std::future::poll_fn(|cx| -> Poll<std::io::Result<usize>> {
-                    Pin::new(&mut retention).poll_write(cx, remaining)
-                })
-                .await
-                .map_err(|e| Error::Cbor(aqueduct_cbor::Error::from(e)))?;
-                remaining = &remaining[w..];
-            }
-            total += n as u64;
-        }
-        std::future::poll_fn(|cx| -> Poll<std::io::Result<()>> {
-            Pin::new(&mut retention).poll_flush(cx)
-        })
-        .await
-        .map_err(|e| Error::Cbor(aqueduct_cbor::Error::from(e)))?;
-
-        Self::from_retention(retention, total)
-    }
-
-    pub fn from_retention(retention: S, len: u64) -> Result<Self, Error> {
-        if len == 0 {
-            return Err(Error::EmptyRetention);
-        }
-        let source = retention
-            .reader(0, len)
-            .map_err(aqueduct_cbor::Error::from)?;
-        let noop_bundle = BundleReader::new(source, NoopRetention).into_bundle()?;
-        let Bundle {
-            primary,
-            blocks,
-            retention: _,
-        } = noop_bundle;
-        Ok(Bundle::from_parts(primary, blocks, retention))
-    }
-
     pub fn payload_reader(&self) -> std::io::Result<S::Reader<'_>> {
         let (offset, len) = self
             .payload_block()

@@ -19,8 +19,6 @@ pub trait Retention: Write {
         Self: 'a;
 
     fn reader(&self, offset: u64, len: u64) -> io::Result<Self::Reader<'_>>;
-
-    /// Discard all stored bytes. Called when parsing fails.
     fn discard(&mut self) -> io::Result<()>;
 }
 

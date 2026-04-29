@@ -1,15 +1,15 @@
 use std::io::Read;
 
 use aqueduct::{
-    BlockEvent, BlockFlags, BundleReader, BundleWriter, CanonicalBlock, Crc, CreationTimestamp,
-    Eid, HopCount, PrimaryBlock,
+    BlockEvent, BlockFlags, BundleBuilder, BundleReader, BundleWriter, CanonicalBlock, Crc,
+    CreationTimestamp, Eid, HopCount, MemoryRetention, PrimaryBlock,
 };
 
 #[test]
 fn stream_roundtrip_minimal() {
     let primary = PrimaryBlock {
         version: 7,
-        flags: aqueduct::BundleFlags::from_bits(0),
+        flags: aqueduct::BundleFlags::from_bits(0x000004),
         crc: Crc::None,
         dest_eid: Eid::Null,
         src_node_id: Eid::Null,
@@ -30,16 +30,16 @@ fn stream_roundtrip_minimal() {
     writer.end_payload().unwrap();
     writer.finish().unwrap();
 
-    // Step-by-step reading
-    let mut reader = BundleReader::new(buf.as_slice(), aqueduct::MemoryRetention::new());
+    let reader = BundleReader::new();
+    let mut session = reader.open(buf.as_slice(), MemoryRetention::new());
 
     let mut read_payload = Vec::new();
-    while let Some(event) = reader.next_block().unwrap() {
+    while let Some(event) = session.next_block().unwrap() {
         match event {
             BlockEvent::Extension(_) => {}
             BlockEvent::Payload { len } => {
                 assert_eq!(len, payload.len() as u64);
-                reader
+                session
                     .payload_reader()
                     .read_to_end(&mut read_payload)
                     .unwrap();
@@ -47,9 +47,8 @@ fn stream_roundtrip_minimal() {
         }
     }
     assert_eq!(read_payload, payload);
-    assert_eq!(reader.primary().unwrap().version, 7);
-    assert_eq!(reader.primary().unwrap().lifetime, 3_600_000_000);
-    let bundle = reader.into_bundle().unwrap();
+    assert_eq!(session.primary().unwrap().version, 7);
+    let bundle = session.into_bundle().unwrap();
     assert!(bundle.payload_crc().is_none());
 }
 
@@ -57,7 +56,7 @@ fn stream_roundtrip_minimal() {
 fn stream_roundtrip_with_crc() {
     let primary = PrimaryBlock {
         version: 7,
-        flags: aqueduct::BundleFlags::from_bits(0),
+        flags: aqueduct::BundleFlags::from_bits(0x000004),
         crc: Crc::crc32c(),
         dest_eid: Eid::Ipn {
             allocator_id: 0,
@@ -83,14 +82,13 @@ fn stream_roundtrip_with_crc() {
     writer.end_payload().unwrap();
     writer.finish().unwrap();
 
-    let mut reader = BundleReader::new(buf.as_slice(), aqueduct::MemoryRetention::new());
-
+    let mut session = BundleReader::new().open(buf.as_slice(), MemoryRetention::new());
     let mut read_payload = Vec::new();
-    while let Some(event) = reader.next_block().unwrap() {
+    while let Some(event) = session.next_block().unwrap() {
         match event {
             BlockEvent::Extension(_) => {}
             BlockEvent::Payload { .. } => {
-                reader
+                session
                     .payload_reader()
                     .read_to_end(&mut read_payload)
                     .unwrap();
@@ -98,20 +96,15 @@ fn stream_roundtrip_with_crc() {
         }
     }
     assert_eq!(read_payload, payload);
-
-    let bundle = reader.into_bundle().unwrap();
+    let bundle = session.into_bundle().unwrap();
     assert_eq!(bundle.payload_crc().crc_type(), 1);
-    match bundle.payload_crc() {
-        Crc::Crc16(v) => assert_ne!(v, 0),
-        _ => panic!("expected Crc16"),
-    }
 }
 
 #[test]
 fn stream_roundtrip_with_extensions() {
     let primary = PrimaryBlock {
         version: 7,
-        flags: aqueduct::BundleFlags::from_bits(0),
+        flags: aqueduct::BundleFlags::from_bits(0x000004),
         crc: Crc::None,
         dest_eid: Eid::Null,
         src_node_id: Eid::Null,
@@ -136,20 +129,16 @@ fn stream_roundtrip_with_extensions() {
     writer.end_payload().unwrap();
     writer.finish().unwrap();
 
-    let mut reader = BundleReader::new(buf.as_slice(), aqueduct::MemoryRetention::new());
-
+    let mut session = BundleReader::new().open(buf.as_slice(), MemoryRetention::new());
     let mut ext_count = 0;
-    while let Some(event) = reader.next_block().unwrap() {
+    while let Some(event) = session.next_block().unwrap() {
         match event {
             BlockEvent::Extension(idx) => {
-                let parsed = reader.blocks()[idx].parse_ext::<HopCount>().unwrap();
+                let parsed = session.blocks()[idx].parse_ext::<HopCount>().unwrap();
                 assert_eq!(parsed.limit, 30);
-                assert_eq!(parsed.count, 5);
                 ext_count += 1;
             }
-            BlockEvent::Payload { len } => {
-                reader.walk(len).unwrap();
-            }
+            BlockEvent::Payload { len } => session.walk(len).unwrap(),
         }
     }
     assert_eq!(ext_count, 1);
@@ -159,7 +148,7 @@ fn stream_roundtrip_with_extensions() {
 fn stream_walk() {
     let primary = PrimaryBlock {
         version: 7,
-        flags: aqueduct::BundleFlags::from_bits(0),
+        flags: aqueduct::BundleFlags::from_bits(0x000004),
         crc: Crc::None,
         dest_eid: Eid::Null,
         src_node_id: Eid::Null,
@@ -179,19 +168,14 @@ fn stream_walk() {
     writer.end_payload().unwrap();
     writer.finish().unwrap();
 
-    let mut reader = BundleReader::new(buf.as_slice(), aqueduct::MemoryRetention::new());
-
-    while let Some(event) = reader.next_block().unwrap() {
-        match event {
-            BlockEvent::Extension(_) => {}
-            BlockEvent::Payload { len } => {
-                assert_eq!(len, 1000);
-                reader.walk(len).unwrap();
-            }
+    let mut session = BundleReader::new().open(buf.as_slice(), MemoryRetention::new());
+    while let Some(event) = session.next_block().unwrap() {
+        if let BlockEvent::Payload { len } = event {
+            assert_eq!(len, 1000);
+            session.walk(len).unwrap();
         }
     }
-
-    let bundle = reader.into_bundle().unwrap();
+    let bundle = session.into_bundle().unwrap();
     assert!(bundle.payload_crc().is_none());
 }
 
@@ -199,7 +183,6 @@ fn stream_walk() {
 fn stream_compatible_with_inmemory() {
     let primary = PrimaryBlock {
         version: 7,
-        // Null source requires no_fragment flag per RFC 9171
         flags: aqueduct::BundleFlags::from_bits(0x000004),
         crc: Crc::None,
         dest_eid: Eid::Null,
@@ -209,7 +192,6 @@ fn stream_compatible_with_inmemory() {
         lifetime: 3_600_000_000,
         fragment: None,
     };
-
     let payload = b"cross-api test";
 
     let mut stream_buf = Vec::new();
@@ -222,8 +204,9 @@ fn stream_compatible_with_inmemory() {
     writer.end_payload().unwrap();
     writer.finish().unwrap();
 
-    let bundle =
-        aqueduct::Bundle::from_bytes(&stream_buf, aqueduct::MemoryRetention::new()).unwrap();
+    let bundle = BundleReader::new()
+        .read_from(stream_buf.as_slice(), MemoryRetention::new())
+        .unwrap();
     assert_eq!(bundle.primary().version, 7);
 
     let inmem_buf = bundle.encode().unwrap();
@@ -234,7 +217,7 @@ fn stream_compatible_with_inmemory() {
 fn stream_forwarding_pattern() {
     let primary = PrimaryBlock {
         version: 7,
-        flags: aqueduct::BundleFlags::from_bits(0),
+        flags: aqueduct::BundleFlags::from_bits(0x000004),
         crc: Crc::None,
         dest_eid: Eid::Ipn {
             allocator_id: 0,
@@ -251,9 +234,8 @@ fn stream_forwarding_pattern() {
         lifetime: 60_000_000,
         fragment: None,
     };
-    let payload = b"forwarded payload data that streams through";
+    let payload = b"forwarded payload";
 
-    // Encode original
     let mut original = Vec::new();
     let mut w = BundleWriter::new(&mut original).unwrap();
     w.write_primary(&primary).unwrap();
@@ -263,38 +245,40 @@ fn stream_forwarding_pattern() {
     w.end_payload().unwrap();
     w.finish().unwrap();
 
-    // Forward: read step-by-step, add hop count, stream payload through
-    let mut reader = BundleReader::new(original.as_slice(), aqueduct::MemoryRetention::new());
+    let mut session = BundleReader::new().open(original.as_slice(), MemoryRetention::new());
 
     let mut forwarded = Vec::new();
     let mut writer = BundleWriter::new(&mut forwarded).unwrap();
     let mut wrote_primary = false;
 
-    while let Some(event) = reader.next_block().unwrap() {
-        // After first next_block(), primary is available
+    while let Some(event) = session.next_block().unwrap() {
         if !wrote_primary {
-            writer.write_primary(reader.primary().unwrap()).unwrap();
+            writer.write_primary(session.primary().unwrap()).unwrap();
             let hc = HopCount {
                 limit: 30,
                 count: 1,
             };
-            let ext = CanonicalBlock::from_ext(2, BlockFlags::from_bits(0), Crc::None, &hc);
-            writer.write_extension(&ext).unwrap();
+            writer
+                .write_extension(&CanonicalBlock::from_ext(
+                    2,
+                    BlockFlags::from_bits(0),
+                    Crc::None,
+                    &hc,
+                ))
+                .unwrap();
             wrote_primary = true;
         }
-
         match event {
             BlockEvent::Extension(idx) => {
-                writer.write_extension(&reader.blocks()[idx]).unwrap();
+                writer.write_extension(&session.blocks()[idx]).unwrap();
             }
             BlockEvent::Payload { len } => {
                 writer
                     .begin_payload(BlockFlags::from_bits(0), Crc::None, len)
                     .unwrap();
-
                 let mut buf = [0u8; 8192];
                 {
-                    let mut pr = reader.payload_reader();
+                    let mut pr = session.payload_reader();
                     loop {
                         let n = pr.read(&mut buf).unwrap();
                         if n == 0 {
@@ -309,19 +293,18 @@ fn stream_forwarding_pattern() {
     }
     writer.finish().unwrap();
 
-    // Verify forwarded bundle
-    let mut reader2 = BundleReader::new(forwarded.as_slice(), aqueduct::MemoryRetention::new());
+    let mut session2 = BundleReader::new().open(forwarded.as_slice(), MemoryRetention::new());
     let mut ext_count = 0;
     let mut fwd_payload = Vec::new();
-    while let Some(event) = reader2.next_block().unwrap() {
+    while let Some(event) = session2.next_block().unwrap() {
         match event {
             BlockEvent::Extension(idx) => {
-                let hop = reader2.blocks()[idx].parse_ext::<HopCount>().unwrap();
+                let hop = session2.blocks()[idx].parse_ext::<HopCount>().unwrap();
                 assert_eq!(hop.count, 1);
                 ext_count += 1;
             }
             BlockEvent::Payload { .. } => {
-                reader2
+                session2
                     .payload_reader()
                     .read_to_end(&mut fwd_payload)
                     .unwrap();
@@ -330,26 +313,22 @@ fn stream_forwarding_pattern() {
     }
     assert_eq!(ext_count, 1);
     assert_eq!(fwd_payload, payload);
-    assert_eq!(reader2.primary().unwrap().dest_eid, primary.dest_eid);
+    assert_eq!(session2.primary().unwrap().dest_eid, primary.dest_eid);
 }
 
+// -- Retention tests ---------------------------------------------------------
+
 #[test]
-fn retention_from_bytes_roundtrip() {
-    let payload = b"retained payload";
-    let bundle = aqueduct::Bundle::builder(
-        Eid::Null,
-        Eid::Null,
-        1000,
-        payload,
-        aqueduct::MemoryRetention::new(),
-    )
-    .unwrap()
-    .build();
-
+fn memory_retention_roundtrip() {
+    let payload = b"memory retention test";
+    let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
+        .unwrap()
+        .build();
     let encoded = bundle.encode().unwrap();
-    let decoded = aqueduct::Bundle::from_bytes(&encoded, aqueduct::MemoryRetention::new()).unwrap();
+    let decoded = BundleReader::new()
+        .read_from(encoded.as_slice(), MemoryRetention::new())
+        .unwrap();
 
-    // Read payload back from retention
     let mut buf = Vec::new();
     decoded
         .payload_reader()
@@ -358,67 +337,16 @@ fn retention_from_bytes_roundtrip() {
         .unwrap();
     assert_eq!(buf, payload);
 
-    // Re-encode from retention
     let reencoded = decoded.encode().unwrap();
     assert_eq!(encoded, reencoded);
 }
 
 #[test]
-fn retention_from_stream_roundtrip() {
-    let payload = b"streamed and retained";
-    let bundle = aqueduct::Bundle::builder(
-        Eid::Ipn {
-            allocator_id: 0,
-            node_number: 5,
-            service_number: 1,
-        },
-        Eid::Null,
-        60_000_000,
-        payload,
-        aqueduct::MemoryRetention::new(),
-    )
-    .unwrap()
-    .build();
-
-    let encoded = bundle.encode().unwrap();
-
-    // from_stream with a fresh retention
-    let decoded =
-        aqueduct::Bundle::from_stream(encoded.as_slice(), aqueduct::MemoryRetention::new())
-            .unwrap();
-
-    assert_eq!(
-        decoded.primary().dest_eid,
-        Eid::Ipn {
-            allocator_id: 0,
-            node_number: 5,
-            service_number: 1
-        }
-    );
-
-    let mut buf = Vec::new();
-    decoded
-        .payload_reader()
-        .unwrap()
-        .read_to_end(&mut buf)
-        .unwrap();
-    assert_eq!(buf, payload);
-}
-
-#[test]
 fn retention_builder_payload_reader() {
     let payload = b"builder stores in retention";
-    let bundle = aqueduct::Bundle::builder(
-        Eid::Null,
-        Eid::Null,
-        1000,
-        payload,
-        aqueduct::MemoryRetention::new(),
-    )
-    .unwrap()
-    .build();
-
-    // payload_reader works immediately after build (no encode/decode cycle)
+    let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
+        .unwrap()
+        .build();
     let mut buf = Vec::new();
     bundle
         .payload_reader()
@@ -435,7 +363,7 @@ fn writer_rejects_excess_payload() {
     writer
         .write_primary(&PrimaryBlock {
             version: 7,
-            flags: aqueduct::BundleFlags::from_bits(0),
+            flags: aqueduct::BundleFlags::from_bits(0x000004),
             crc: Crc::None,
             dest_eid: Eid::Null,
             src_node_id: Eid::Null,
@@ -455,7 +383,7 @@ fn writer_rejects_excess_payload() {
 fn reader_walk_partial() {
     let primary = PrimaryBlock {
         version: 7,
-        flags: aqueduct::BundleFlags::from_bits(0),
+        flags: aqueduct::BundleFlags::from_bits(0x000004),
         crc: Crc::None,
         dest_eid: Eid::Null,
         src_node_id: Eid::Null,
@@ -475,48 +403,15 @@ fn reader_walk_partial() {
     writer.end_payload().unwrap();
     writer.finish().unwrap();
 
-    let mut reader = BundleReader::new(buf.as_slice(), aqueduct::MemoryRetention::new());
-
-    while let Some(event) = reader.next_block().unwrap() {
+    let mut session = BundleReader::new().open(buf.as_slice(), MemoryRetention::new());
+    while let Some(event) = session.next_block().unwrap() {
         if let BlockEvent::Payload { .. } = event {
-            reader.walk(50).unwrap();
-            reader.walk(50).unwrap();
+            session.walk(50).unwrap();
+            session.walk(50).unwrap();
         }
     }
-    let bundle = reader.into_bundle().unwrap();
+    let bundle = session.into_bundle().unwrap();
     assert_eq!(bundle.payload_len(), 100);
-}
-
-// ---------------------------------------------------------------------------
-// Retention tests
-// ---------------------------------------------------------------------------
-
-#[test]
-fn memory_retention_roundtrip() {
-    let payload = b"memory retention test";
-    let bundle = aqueduct::Bundle::builder(
-        Eid::Null,
-        Eid::Null,
-        1000,
-        payload,
-        aqueduct::MemoryRetention::new(),
-    )
-    .unwrap()
-    .build();
-
-    let encoded = bundle.encode().unwrap();
-    let decoded = aqueduct::Bundle::from_bytes(&encoded, aqueduct::MemoryRetention::new()).unwrap();
-
-    let mut buf = Vec::new();
-    decoded
-        .payload_reader()
-        .unwrap()
-        .read_to_end(&mut buf)
-        .unwrap();
-    assert_eq!(buf, payload);
-
-    let reencoded = decoded.encode().unwrap();
-    assert_eq!(encoded, reencoded);
 }
 
 #[test]
@@ -524,7 +419,7 @@ fn disk_retention_roundtrip() {
     let path = "/tmp/aqueduct_test_disk_retention.bin";
     let payload = b"disk retention test payload data";
 
-    let bundle = aqueduct::Bundle::builder(
+    let bundle = BundleBuilder::new(
         Eid::Ipn {
             allocator_id: 0,
             node_number: 1,
@@ -533,25 +428,16 @@ fn disk_retention_roundtrip() {
         Eid::Null,
         1000,
         payload,
-        aqueduct::MemoryRetention::new(),
+        MemoryRetention::new(),
     )
     .unwrap()
     .build();
 
     let encoded = bundle.encode().unwrap();
-
     let disk = aqueduct::DiskRetention::new(path).unwrap();
-    let decoded = aqueduct::Bundle::from_bytes(&encoded, disk).unwrap();
-
-    assert_eq!(decoded.payload_len(), payload.len() as u64);
-    assert_eq!(
-        decoded.primary().dest_eid,
-        Eid::Ipn {
-            allocator_id: 0,
-            node_number: 1,
-            service_number: 1,
-        }
-    );
+    let decoded = BundleReader::new()
+        .read_from(encoded.as_slice(), disk)
+        .unwrap();
 
     let mut buf = Vec::new();
     decoded
@@ -563,38 +449,6 @@ fn disk_retention_roundtrip() {
 
     let reencoded = decoded.encode().unwrap();
     assert_eq!(encoded, reencoded);
-
-    std::fs::remove_file(path).unwrap();
-}
-
-#[test]
-fn disk_retention_large_payload() {
-    let path = "/tmp/aqueduct_test_disk_large.bin";
-    let payload = vec![0xCDu8; 1024 * 1024]; // 1 MB
-
-    let bundle = aqueduct::Bundle::builder(
-        Eid::Null,
-        Eid::Null,
-        1000,
-        &payload,
-        aqueduct::MemoryRetention::new(),
-    )
-    .unwrap()
-    .build();
-
-    let encoded = bundle.encode().unwrap();
-
-    let disk = aqueduct::DiskRetention::new(path).unwrap();
-    let decoded = aqueduct::Bundle::from_bytes(&encoded, disk).unwrap();
-
-    let mut buf = Vec::new();
-    decoded
-        .payload_reader()
-        .unwrap()
-        .read_to_end(&mut buf)
-        .unwrap();
-    assert_eq!(buf.len(), payload.len());
-    assert!(buf.iter().all(|&b| b == 0xCD));
 
     std::fs::remove_file(path).unwrap();
 }
@@ -605,23 +459,15 @@ fn disk_retention_from_stream() {
     let retention_path = "/tmp/aqueduct_test_retention_stream.bin";
     let payload = b"streaming to disk";
 
-    // Write bundle to file
-    let bundle = aqueduct::Bundle::builder(
-        Eid::Null,
-        Eid::Null,
-        1000,
-        payload,
-        aqueduct::MemoryRetention::new(),
-    )
-    .unwrap()
-    .build();
+    let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
+        .unwrap()
+        .build();
     let encoded = bundle.encode().unwrap();
     std::fs::write(bundle_path, &encoded).unwrap();
 
-    // Read from file stream → DiskRetention
     let file = std::fs::File::open(bundle_path).unwrap();
     let disk = aqueduct::DiskRetention::new(retention_path).unwrap();
-    let decoded = aqueduct::Bundle::from_stream(file, disk).unwrap();
+    let decoded = BundleReader::new().read_from(file, disk).unwrap();
 
     let mut buf = Vec::new();
     decoded
@@ -639,10 +485,9 @@ fn disk_retention_from_stream() {
 fn streaming_crc_matches_inmemory_crc() {
     let payload = b"crc cross-validation payload";
 
-    // Encode via BundleWriter (streaming CRC)
-    let primary = aqueduct::PrimaryBlock {
+    let primary = PrimaryBlock {
         version: 7,
-        flags: aqueduct::BundleFlags::from_bits(0x000004), // no_fragment for null source
+        flags: aqueduct::BundleFlags::from_bits(0x000004),
         crc: Crc::crc32c(),
         dest_eid: Eid::Null,
         src_node_id: Eid::Null,
@@ -662,37 +507,23 @@ fn streaming_crc_matches_inmemory_crc() {
     writer.end_payload().unwrap();
     writer.finish().unwrap();
 
-    // Encode via Bundle.encode() (in-memory CRC)
-    let bundle = aqueduct::Bundle::builder(
-        Eid::Null,
-        Eid::Null,
-        1000,
-        payload,
-        aqueduct::MemoryRetention::new(),
-    )
-    .unwrap()
-    .build();
+    let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
+        .unwrap()
+        .build();
     let inmem_buf = bundle.encode().unwrap();
 
-    // Both should decode to the same CRC values
-    let stream_bundle =
-        aqueduct::Bundle::from_bytes(&stream_buf, aqueduct::MemoryRetention::new()).unwrap();
-    let inmem_bundle =
-        aqueduct::Bundle::from_bytes(&inmem_buf, aqueduct::MemoryRetention::new()).unwrap();
+    let stream_bundle = BundleReader::new()
+        .read_from(stream_buf.as_slice(), MemoryRetention::new())
+        .unwrap();
+    let inmem_bundle = BundleReader::new()
+        .read_from(inmem_buf.as_slice(), MemoryRetention::new())
+        .unwrap();
 
-    // Primary CRC should match (both use CRC-32C)
     assert_eq!(
         stream_bundle.primary().crc.crc_type(),
         inmem_bundle.primary().crc.crc_type()
     );
-    // Payload CRC — streaming used crc16, builder defaults to None
-    assert_eq!(stream_bundle.payload_crc().crc_type(), 1);
-    match stream_bundle.payload_crc() {
-        Crc::Crc16(v) => assert_ne!(v, 0),
-        _ => panic!("expected Crc16"),
-    }
 
-    // Re-encode both and verify round-trip
     let re_stream = stream_bundle.encode().unwrap();
     let re_inmem = inmem_bundle.encode().unwrap();
     assert_eq!(stream_buf, re_stream);

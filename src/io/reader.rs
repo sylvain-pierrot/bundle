@@ -1,4 +1,4 @@
-//! Streaming bundle reader — step-by-step state machine.
+//! Streaming bundle reader.
 
 use std::io::Read;
 
@@ -9,8 +9,8 @@ use crate::bundle::canonical::{BlockData, CanonicalBlock};
 use crate::bundle::crc::Crc;
 use crate::bundle::primary::PrimaryBlock;
 use crate::error::Error;
-use crate::io::retention::Retention;
 use crate::io::tee::TeeReader;
+use crate::retention::Retention;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
@@ -23,16 +23,21 @@ enum State {
 
 /// What [`BundleReader::next_block`] yielded.
 pub enum BlockEvent {
-    /// An extension block was parsed (index into [`BundleReader::blocks`]).
     Extension(usize),
-    /// The payload block header was parsed. Data follows in the stream.
     Payload { len: u64 },
 }
 
-/// Streaming bundle parser.
+/// Stateless streaming bundle parser.
 ///
 /// ```text
-///  new(source, retention)
+/// let reader = BundleReader::new();
+/// let bundle = reader.read_from(socket, retention)?;
+/// ```
+///
+/// Or step-by-step via [`open`](Self::open) + [`next_block`](Self::next_block):
+///
+/// ```text
+///  open(source, retention)
 ///    │
 ///    ▼
 ///  ┌─────────────────────┐
@@ -52,7 +57,37 @@ pub enum BlockEvent {
 ///     ▼
 ///  into_bundle() → Bundle<S>
 /// ```
-pub struct BundleReader<R, S: Retention> {
+pub struct BundleReader;
+
+impl BundleReader {
+    pub fn new() -> Self {
+        BundleReader
+    }
+
+    /// Parse a bundle from a source, storing wire bytes in the retention.
+    /// One-shot: reads, parses, and returns the bundle.
+    pub fn read_from<R: Read, S: Retention>(
+        &self,
+        source: R,
+        retention: S,
+    ) -> Result<Bundle<S>, Error> {
+        OpenBundleReader::open(source, retention).into_bundle()
+    }
+
+    /// Open a source for step-by-step parsing.
+    pub fn open<R: Read, S: Retention>(&self, source: R, retention: S) -> OpenBundleReader<R, S> {
+        OpenBundleReader::open(source, retention)
+    }
+}
+
+impl Default for BundleReader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// An active parsing session, created by [`BundleReader::open`].
+pub struct OpenBundleReader<R, S: Retention> {
     dec: StreamDecoder<TeeReader<R, S>>,
     state: State,
     primary: Option<PrimaryBlock>,
@@ -62,10 +97,10 @@ pub struct BundleReader<R, S: Retention> {
     payload_remaining: u64,
 }
 
-impl<R: Read, S: Retention> BundleReader<R, S> {
-    pub fn new(source: R, retention: S) -> Self {
+impl<R: Read, S: Retention> OpenBundleReader<R, S> {
+    pub(crate) fn open(source: R, retention: S) -> Self {
         let tee = TeeReader::new(source, retention);
-        BundleReader {
+        OpenBundleReader {
             dec: StreamDecoder::new(tee),
             state: State::Initial,
             primary: None,
@@ -86,7 +121,6 @@ impl<R: Read, S: Retention> BundleReader<R, S> {
             }
             State::Blocks => {}
             State::PayloadConsumed => {
-                // Read the CRC that follows the payload data
                 let idx = self.payload_idx.unwrap();
                 self.blocks[idx].crc = if self.payload_crc_type != 0 {
                     Crc::decode(&mut self.dec, self.payload_crc_type)?
@@ -108,14 +142,10 @@ impl<R: Read, S: Retention> BundleReader<R, S> {
         let (block, has_data_in_stream) = CanonicalBlock::decode(&mut self.dec)?;
 
         if has_data_in_stream {
-            // Payload block — data follows in the stream
             if self.payload_idx.is_some() {
                 return Err(Error::InvalidPayloadCount(2));
             }
-            let data_len = match &block.data {
-                BlockData::Retained { len, .. } => *len,
-                _ => unreachable!(),
-            };
+            let data_len = block.retained_range().ok_or(Error::PayloadNotInline)?.1;
             self.payload_crc_type = block.crc.crc_type();
             self.payload_remaining = data_len;
             self.payload_idx = Some(self.blocks.len());
@@ -123,7 +153,6 @@ impl<R: Read, S: Retention> BundleReader<R, S> {
             self.state = State::PayloadData;
             Ok(Some(BlockEvent::Payload { len: data_len }))
         } else {
-            // Extension block — fully parsed
             self.blocks.push(block);
             Ok(Some(BlockEvent::Extension(self.blocks.len() - 1)))
         }
@@ -186,9 +215,9 @@ impl<R: Read, S: Retention> BundleReader<R, S> {
     }
 }
 
-/// A reader that yields exactly the payload bytes from a [`BundleReader`].
+/// A reader that yields exactly the payload bytes.
 pub struct PayloadReader<'a, R, S: Retention> {
-    reader: &'a mut BundleReader<R, S>,
+    reader: &'a mut OpenBundleReader<R, S>,
 }
 
 impl<R: Read, S: Retention> Read for PayloadReader<'_, R, S> {
