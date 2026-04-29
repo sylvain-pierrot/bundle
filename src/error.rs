@@ -61,4 +61,7 @@ pub enum Error {
 
     #[error("bundle stream not fully consumed")]
     IncompleteRead,
+
+    #[error("bundle rejected: {0}")]
+    FilterRejected(#[from] crate::filter::FilterRejection),
 }

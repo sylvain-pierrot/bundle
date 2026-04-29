@@ -1,6 +1,7 @@
-//! Streaming bundle reader.
+//! Streaming bundle reader with optional ingress filter pipeline.
 
 use std::io::Read;
+use std::sync::Arc;
 
 use aqueduct_cbor::StreamDecoder;
 
@@ -9,7 +10,9 @@ use crate::bundle::canonical::CanonicalBlock;
 use crate::bundle::crc::Crc;
 use crate::bundle::primary::PrimaryBlock;
 use crate::error::Error;
-use crate::io::tee::TeeReader;
+use crate::filter::{BundleFilter, BundleMetadata, BundleMutator, FilterChain};
+use crate::io::tee::CaptureReader;
+use crate::io::tee::{DeferredReader, TeeReader};
 use crate::retention::Retention;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,62 +24,53 @@ enum State {
     Done,
 }
 
-/// What [`BundleReader::next_block`] yielded.
+/// What [`OpenBundleReader::next_block`] yielded.
 pub enum BlockEvent {
     Extension(usize),
     Payload { len: u64 },
 }
 
-/// Stateless streaming bundle parser.
+/// Streaming bundle parser with optional ingress filter pipeline.
 ///
-/// ```text
-/// let reader = BundleReader::new();
-/// let bundle = reader.read_from(socket, retention)?;
-/// ```
-///
-/// Or step-by-step via [`open`](Self::open) + [`next_block`](Self::next_block):
-///
-/// ```text
-///  open(source, retention)
-///    │
-///    ▼
-///  ┌─────────────────────┐
-///  │  next_block()       │◄──────────────────────┐
-///  └──┬──────────────┬───┘                       │
-///     │              │                           │
-///  Extension      Payload { len }             (loop)
-///     │              │                           │
-///     │         payload_reader()                 │
-///     │             or                           │
-///     │         walk(len)                        │
-///     │              │                           │
-///     └──────────────┴───────────────────────────┘
-///     │
-///  None (end of bundle)
-///     │
-///     ▼
-///  into_bundle() → Bundle<S>
-/// ```
-pub struct BundleReader;
+/// Filters run in-flight before the payload touches retention.
+/// Rejected bundles waste zero storage I/O.
+pub struct BundleReader {
+    chain: Arc<FilterChain>,
+}
 
 impl BundleReader {
     pub fn new() -> Self {
-        BundleReader
+        BundleReader {
+            chain: Arc::new(FilterChain::new()),
+        }
+    }
+
+    pub fn filter(mut self, f: impl BundleFilter + 'static) -> Self {
+        Arc::get_mut(&mut self.chain)
+            .expect("filter must be called before cloning the reader")
+            .add_filter(f);
+        self
+    }
+
+    pub fn mutator(mut self, m: impl BundleMutator + 'static) -> Self {
+        Arc::get_mut(&mut self.chain)
+            .expect("mutator must be called before cloning the reader")
+            .add_mutator(m);
+        self
     }
 
     /// Parse a bundle from a source, storing wire bytes in the retention.
-    /// One-shot: reads, parses, and returns the bundle.
     pub fn read_from<R: Read, S: Retention>(
         &self,
         source: R,
         retention: S,
     ) -> Result<Bundle<S>, Error> {
-        OpenBundleReader::open(source, retention).into_bundle()
+        OpenBundleReader::open(source, retention, self.chain.clone()).into_bundle()
     }
 
     /// Open a source for step-by-step parsing.
     pub fn open<R: Read, S: Retention>(&self, source: R, retention: S) -> OpenBundleReader<R, S> {
-        OpenBundleReader::open(source, retention)
+        OpenBundleReader::open(source, retention, self.chain.clone())
     }
 }
 
@@ -88,26 +82,45 @@ impl Default for BundleReader {
 
 /// An active parsing session, created by [`BundleReader::open`].
 pub struct OpenBundleReader<R, S: Retention> {
-    dec: StreamDecoder<TeeReader<R, S>>,
+    dec: StreamDecoder<DeferredReader<R, S>>,
     state: State,
     primary: Option<PrimaryBlock>,
     blocks: Vec<CanonicalBlock>,
     payload_idx: Option<usize>,
     payload_crc_type: u64,
     payload_remaining: u64,
+    retention: Option<S>,
+    chain: Arc<FilterChain>,
 }
 
 impl<R: Read, S: Retention> OpenBundleReader<R, S> {
-    pub(crate) fn open(source: R, retention: S) -> Self {
-        let tee = TeeReader::new(source, retention);
-        OpenBundleReader {
-            dec: StreamDecoder::new(tee),
-            state: State::Initial,
-            primary: None,
-            blocks: Vec::new(),
-            payload_idx: None,
-            payload_crc_type: 0,
-            payload_remaining: 0,
+    pub(crate) fn open(source: R, retention: S, chain: Arc<FilterChain>) -> Self {
+        if chain.is_empty() {
+            let tee = TeeReader::new(source, retention);
+            OpenBundleReader {
+                dec: StreamDecoder::new(DeferredReader::Teeing(tee)),
+                state: State::Initial,
+                primary: None,
+                blocks: Vec::new(),
+                payload_idx: None,
+                payload_crc_type: 0,
+                payload_remaining: 0,
+                retention: None,
+                chain,
+            }
+        } else {
+            let capture = CaptureReader::new(source);
+            OpenBundleReader {
+                dec: StreamDecoder::new(DeferredReader::Capturing(capture)),
+                state: State::Initial,
+                primary: None,
+                blocks: Vec::new(),
+                payload_idx: None,
+                payload_crc_type: 0,
+                payload_remaining: 0,
+                retention: Some(retention),
+                chain,
+            }
         }
     }
 
@@ -147,6 +160,27 @@ impl<R: Read, S: Retention> OpenBundleReader<R, S> {
                 return Err(Error::InvalidPayloadCount(2));
             }
             let data_len = block.retained_range().ok_or(Error::PayloadNotInline)?.1;
+
+            if !self.chain.is_empty() {
+                let meta = BundleMetadata {
+                    primary: self.primary.as_ref().ok_or(Error::IncompleteRead)?,
+                    extensions: &self.blocks,
+                    payload_len: data_len,
+                };
+                self.chain.run_filters(&meta)?;
+                self.chain.run_mutators(
+                    self.primary.as_mut().ok_or(Error::IncompleteRead)?,
+                    &mut self.blocks,
+                );
+            }
+
+            if let Some(retention) = self.retention.take() {
+                self.dec
+                    .inner()
+                    .activate_retention(retention)
+                    .map_err(aqueduct_cbor::Error::from)?;
+            }
+
             self.payload_crc_type = block.crc.crc_type();
             self.payload_remaining = data_len;
             self.payload_idx = Some(self.blocks.len());
@@ -203,7 +237,12 @@ impl<R: Read, S: Retention> OpenBundleReader<R, S> {
                         Some(p) => p,
                         None => break Error::InvalidPayloadCount(0),
                     };
-                    let (_source, mut retention) = self.dec.into_inner().into_parts();
+                    let mut retention = self
+                        .dec
+                        .into_inner()
+                        .into_retention()
+                        .or(self.retention)
+                        .ok_or(Error::IncompleteRead)?;
                     if let Err(e) = retention.flush() {
                         let _ = retention.discard();
                         return Err(Error::Cbor(aqueduct_cbor::Error::from(e)));
@@ -214,8 +253,11 @@ impl<R: Read, S: Retention> OpenBundleReader<R, S> {
             }
         };
 
-        let (_source, mut retention) = self.dec.into_inner().into_parts();
-        let _ = retention.discard();
+        // Error path: discard retention
+        let mut retention = self.dec.into_inner().into_retention().or(self.retention);
+        if let Some(ref mut r) = retention {
+            let _ = r.discard();
+        }
         Err(err)
     }
 }

@@ -1,7 +1,8 @@
-//! Async streaming bundle writer.
+//! Async streaming bundle writer with optional egress filter pipeline.
 
 use std::io;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::Poll;
 
 use aqueduct_cbor::{Encoder, ToCbor};
@@ -11,6 +12,7 @@ use crate::bundle::canonical::{BlockFlags, CanonicalBlock};
 use crate::bundle::crc::{Crc, CrcHasher};
 use crate::bundle::primary::PrimaryBlock;
 use crate::error::Error;
+use crate::filter::{BundleFilter, BundleMetadata, BundleMutator, FilterChain};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
@@ -19,38 +21,65 @@ enum State {
     Payload,
 }
 
-/// Async streaming bundle encoder.
+/// Async streaming bundle encoder with optional egress filter pipeline.
 ///
-/// Same logic as [`BundleWriter`](super::BundleWriter) but writes to
-/// an [`AsyncWrite`] sink. Block headers are encoded synchronously
-/// (CPU-bound, nanoseconds), then async-written to the sink.
+/// Filters run before the first byte hits the wire.
+/// Rejected bundles waste zero network I/O.
 pub struct BundleAsyncWriter<W> {
     writer: W,
     state: State,
     payload_hasher: Option<CrcHasher>,
     payload_crc: Crc,
     payload_remaining: u64,
+    chain: Arc<FilterChain>,
+    primary: Option<PrimaryBlock>,
+    extensions: Vec<CanonicalBlock>,
+    deferred: bool,
 }
 
 impl<W: AsyncWrite + Unpin> BundleAsyncWriter<W> {
-    pub async fn new(mut writer: W) -> Result<Self, Error> {
-        write_all(&mut writer, &[0x9F]).await?; // indefinite array start
+    pub async fn new(writer: W) -> Result<Self, Error> {
         Ok(Self {
             writer,
             state: State::Init,
             payload_hasher: None,
             payload_crc: Crc::None,
             payload_remaining: 0,
+            chain: Arc::new(FilterChain::new()),
+            primary: None,
+            extensions: Vec::new(),
+            deferred: false,
         })
+    }
+
+    pub fn filter(mut self, f: impl BundleFilter + 'static) -> Self {
+        Arc::get_mut(&mut self.chain)
+            .expect("filter must be called before writing")
+            .add_filter(f);
+        self.deferred = true;
+        self
+    }
+
+    pub fn mutator(mut self, m: impl BundleMutator + 'static) -> Self {
+        Arc::get_mut(&mut self.chain)
+            .expect("mutator must be called before writing")
+            .add_mutator(m);
+        self.deferred = true;
+        self
     }
 
     pub async fn write_primary(&mut self, primary: &PrimaryBlock) -> Result<(), Error> {
         if self.state != State::Init {
             return Err(Error::IncompleteRead);
         }
-        let mut buf = Encoder::with_capacity(128);
-        primary.encode(&mut buf);
-        write_all(&mut self.writer, buf.as_bytes()).await?;
+        if self.deferred {
+            self.primary = Some(primary.clone());
+        } else {
+            write_all(&mut self.writer, &[0x9F]).await?;
+            let mut buf = Encoder::with_capacity(128);
+            primary.encode(&mut buf);
+            write_all(&mut self.writer, buf.as_bytes()).await?;
+        }
         self.state = State::Blocks;
         Ok(())
     }
@@ -59,9 +88,13 @@ impl<W: AsyncWrite + Unpin> BundleAsyncWriter<W> {
         if self.state != State::Blocks {
             return Err(Error::IncompleteRead);
         }
-        let mut buf = Encoder::with_capacity(64);
-        block.encode(&mut buf);
-        write_all(&mut self.writer, buf.as_bytes()).await?;
+        if self.deferred {
+            self.extensions.push(block.clone());
+        } else {
+            let mut buf = Encoder::with_capacity(64);
+            block.encode(&mut buf);
+            write_all(&mut self.writer, buf.as_bytes()).await?;
+        }
         Ok(())
     }
 
@@ -74,8 +107,34 @@ impl<W: AsyncWrite + Unpin> BundleAsyncWriter<W> {
         if self.state != State::Blocks {
             return Err(Error::IncompleteRead);
         }
-        let has_crc = !crc.is_none();
 
+        // Egress filter gate
+        if self.deferred {
+            let mut primary = self.primary.take().ok_or(Error::IncompleteRead)?;
+            let mut extensions = std::mem::take(&mut self.extensions);
+
+            let meta = BundleMetadata {
+                primary: &primary,
+                extensions: &extensions,
+                payload_len: data_len,
+            };
+            self.chain.run_filters(&meta)?;
+            self.chain.run_mutators(&mut primary, &mut extensions);
+
+            write_all(&mut self.writer, &[0x9F]).await?;
+
+            let mut buf = Encoder::with_capacity(128);
+            primary.encode(&mut buf);
+            write_all(&mut self.writer, buf.as_bytes()).await?;
+
+            for ext in &extensions {
+                let mut buf = Encoder::with_capacity(64);
+                ext.encode(&mut buf);
+                write_all(&mut self.writer, buf.as_bytes()).await?;
+            }
+        }
+
+        let has_crc = !crc.is_none();
         let mut header = Encoder::with_capacity(16);
         header.write_array(if has_crc { 6 } else { 5 });
         header.write_uint(1);
@@ -124,8 +183,8 @@ impl<W: AsyncWrite + Unpin> BundleAsyncWriter<W> {
             hasher.update(&zeroed[..1 + crc_size]);
 
             let computed = hasher.finalize();
-            let mut crc_buf = [0u8; 5]; // 1 byte header + max 4 bytes value
-            crc_buf[0] = 0x40 | crc_size as u8; // CBOR bstr header
+            let mut crc_buf = [0u8; 5];
+            crc_buf[0] = 0x40 | crc_size as u8;
             let n = computed.write_value(&mut crc_buf[1..]);
             write_all(&mut self.writer, &crc_buf[..1 + n]).await?;
         }
@@ -137,7 +196,7 @@ impl<W: AsyncWrite + Unpin> BundleAsyncWriter<W> {
         if self.state == State::Payload {
             return Err(Error::PayloadNotConsumed);
         }
-        write_all(&mut self.writer, &[0xFF]).await?; // break
+        write_all(&mut self.writer, &[0xFF]).await?;
         flush(&mut self.writer).await?;
         Ok(self.writer)
     }

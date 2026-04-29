@@ -2,6 +2,7 @@ pub mod bundle;
 pub mod eid;
 pub mod error;
 pub mod extension;
+pub mod filter;
 pub mod io;
 pub mod retention;
 
@@ -13,6 +14,7 @@ pub use bundle::primary::{BundleFlags, CreationTimestamp, FragmentInfo, PrimaryB
 pub use eid::Eid;
 pub use error::Error;
 pub use extension::{BundleAge, Extension, HopCount, PreviousNode};
+pub use filter::{BundleFilter, BundleMetadata, BundleMutator, FilterChain, FilterRejection};
 pub use io::{BlockEvent, BundleReader, BundleWriter, OpenBundleReader, PayloadReader};
 pub use retention::{DiskRetention, MemoryRetention, Retention};
 

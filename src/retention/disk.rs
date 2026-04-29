@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use super::Retention;
 
-const WRITE_BUF_SIZE: usize = 256 * 1024;
-const READ_BUF_SIZE: usize = 256 * 1024;
+const WRITE_BUF_SIZE: usize = 512 * 1024;
+const READ_BUF_SIZE: usize = 512 * 1024;
 
 /// Disk-backed retention. Writes are buffered. Reads use `try_clone`
 /// to avoid re-opening the file.
