@@ -3,8 +3,9 @@ use crc::{CRC_16_IBM_SDLC, CRC_32_ISCSI, Crc as CrcAlgo};
 
 use crate::error::Error;
 
-const CRC16: CrcAlgo<u16> = CrcAlgo::<u16>::new(&CRC_16_IBM_SDLC);
-const CRC32C: CrcAlgo<u32> = CrcAlgo::<u32>::new(&CRC_32_ISCSI);
+// `static` (not `const`) so that `CrcAlgo::digest()` can borrow with 'static lifetime.
+static CRC16: CrcAlgo<u16> = CrcAlgo::<u16>::new(&CRC_16_IBM_SDLC);
+static CRC32C: CrcAlgo<u32> = CrcAlgo::<u32>::new(&CRC_32_ISCSI);
 
 /// CRC field (RFC 9171 §4.2.1).
 ///
@@ -95,22 +96,24 @@ impl Crc {
     /// Decode a CRC value byte string from CBOR.
     pub fn decode_value(dec: &mut Decoder, crc_type: u64) -> Result<Self, Error> {
         let crc_bstr = dec.read_bstr()?;
+        Self::from_bytes(crc_type, crc_bstr)
+    }
+
+    /// Parse a CRC value from raw bytes.
+    pub fn from_bytes(crc_type: u64, bytes: &[u8]) -> Result<Self, Error> {
         match crc_type {
             1 => {
-                if crc_bstr.len() != 2 {
+                if bytes.len() != 2 {
                     return Err(Error::InvalidCbor);
                 }
-                Ok(Crc::Crc16(u16::from_be_bytes([crc_bstr[0], crc_bstr[1]])))
+                Ok(Crc::Crc16(u16::from_be_bytes([bytes[0], bytes[1]])))
             }
             2 => {
-                if crc_bstr.len() != 4 {
+                if bytes.len() != 4 {
                     return Err(Error::InvalidCbor);
                 }
                 Ok(Crc::Crc32c(u32::from_be_bytes([
-                    crc_bstr[0],
-                    crc_bstr[1],
-                    crc_bstr[2],
-                    crc_bstr[3],
+                    bytes[0], bytes[1], bytes[2], bytes[3],
                 ])))
             }
             _ => Err(Error::InvalidCrcType(crc_type)),
@@ -138,6 +141,46 @@ impl Crc {
             }
         }
     }
+
+    /// Encode the CRC value as a CBOR byte string.
+    pub fn value_bytes(&self) -> Option<Vec<u8>> {
+        match self {
+            Crc::None => None,
+            Crc::Crc16(v) => Some(v.to_be_bytes().to_vec()),
+            Crc::Crc32c(v) => Some(v.to_be_bytes().to_vec()),
+        }
+    }
+}
+
+/// Incremental CRC hasher for streaming computation.
+pub enum CrcHasher {
+    Crc16(crc::Digest<'static, u16>),
+    Crc32c(crc::Digest<'static, u32>),
+}
+
+impl CrcHasher {
+    /// Create a hasher matching the given CRC type. Returns `None` for `Crc::None`.
+    pub fn new(crc: &Crc) -> Option<Self> {
+        match crc {
+            Crc::None => None,
+            Crc::Crc16(_) => Some(CrcHasher::Crc16(CRC16.digest())),
+            Crc::Crc32c(_) => Some(CrcHasher::Crc32c(CRC32C.digest())),
+        }
+    }
+
+    pub fn update(&mut self, data: &[u8]) {
+        match self {
+            CrcHasher::Crc16(d) => d.update(data),
+            CrcHasher::Crc32c(d) => d.update(data),
+        }
+    }
+
+    pub fn finalize(self) -> Crc {
+        match self {
+            CrcHasher::Crc16(d) => Crc::Crc16(d.finalize()),
+            CrcHasher::Crc32c(d) => Crc::Crc32c(d.finalize()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -146,13 +189,11 @@ mod tests {
 
     #[test]
     fn crc16_check_value() {
-        // CRC-16/IBM-SDLC (X-25) check value for "123456789"
         assert_eq!(Crc::compute_crc16(b"123456789"), 0x906E);
     }
 
     #[test]
     fn crc32c_check_value() {
-        // CRC-32C (Castagnoli) check value for "123456789"
         assert_eq!(Crc::compute_crc32c(b"123456789"), 0xE3069283);
     }
 
@@ -174,5 +215,22 @@ mod tests {
 
         assert_eq!(Crc::compute(0, data).unwrap(), Crc::None);
         assert!(Crc::compute(3, data).is_err());
+    }
+
+    #[test]
+    fn incremental_crc16() {
+        let mut hasher = CrcHasher::new(&Crc::crc16()).unwrap();
+        hasher.update(b"12345");
+        hasher.update(b"6789");
+        assert_eq!(hasher.finalize(), Crc::Crc16(0x906E));
+    }
+
+    #[test]
+    fn incremental_crc32c() {
+        let mut hasher = CrcHasher::new(&Crc::crc32c()).unwrap();
+        hasher.update(b"123");
+        hasher.update(b"456");
+        hasher.update(b"789");
+        assert_eq!(hasher.finalize(), Crc::Crc32c(0xE3069283));
     }
 }
