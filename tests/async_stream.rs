@@ -73,7 +73,8 @@ async fn async_reader_roundtrip() {
     .build()
     .unwrap();
 
-    let encoded = bundle.encode().unwrap();
+    let mut encoded = Vec::new();
+    bundle.encode_to(&mut encoded).unwrap();
 
     let decoded = BundleAsyncReader::new()
         .read_from(
@@ -174,12 +175,8 @@ async fn async_full_roundtrip() {
     .build()
     .unwrap();
 
-    // Async encode
     let mut encoded = Vec::new();
-    bundle
-        .encode_to_async(futures::io::Cursor::new(&mut encoded))
-        .await
-        .unwrap();
+    bundle.encode_to(&mut encoded).unwrap();
 
     // Async decode
     let decoded = BundleAsyncReader::new()
@@ -211,6 +208,7 @@ async fn async_full_roundtrip() {
     assert_eq!(buf, payload);
 
     // Re-encode sync should match
-    let reencoded = decoded.encode().unwrap();
+    let mut reencoded = Vec::new();
+    decoded.encode_to(&mut reencoded).unwrap();
     assert_eq!(encoded, reencoded);
 }

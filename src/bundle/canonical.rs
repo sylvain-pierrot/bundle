@@ -135,7 +135,7 @@ impl CanonicalBlock {
         if self.crc.is_none() {
             return Ok(());
         }
-        let mut enc = Encoder::new();
+        let mut enc = Encoder::with_capacity(64);
         self.encode(&mut enc);
         let bytes = enc.as_bytes();
         // CRC bstr is the last field. Find its data offset.

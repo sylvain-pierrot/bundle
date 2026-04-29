@@ -80,28 +80,43 @@ impl Crc {
     /// `block_bytes` is the full serialized block.
     /// `crc_data_offset` is the byte offset of the CRC value bytes within
     /// the block (after the CBOR bstr header).
+    /// Verify this CRC against serialized block bytes.
+    ///
+    /// Hashes in three segments (before CRC, zeroed CRC, after CRC)
+    /// to avoid cloning the block bytes.
     pub fn verify(&self, block_bytes: &[u8], crc_data_offset: usize) -> Result<(), Error> {
-        let valid = match self {
-            Crc::None => return Ok(()),
+        match self {
+            Crc::None => Ok(()),
             Crc::Crc16(expected) => {
-                let mut buf = block_bytes.to_vec();
-                buf.get_mut(crc_data_offset..crc_data_offset + 2)
-                    .ok_or(Error::CrcOutOfBounds)?
-                    .fill(0);
-                Self::compute_crc16(&buf) == *expected
+                let crc_end = crc_data_offset
+                    .checked_add(2)
+                    .filter(|&e| e <= block_bytes.len())
+                    .ok_or(Error::CrcOutOfBounds)?;
+                let mut digest = CRC16.digest();
+                digest.update(&block_bytes[..crc_data_offset]);
+                digest.update(&[0, 0]);
+                digest.update(&block_bytes[crc_end..]);
+                if digest.finalize() == *expected {
+                    Ok(())
+                } else {
+                    Err(Error::CrcMismatch)
+                }
             }
             Crc::Crc32c(expected) => {
-                let mut buf = block_bytes.to_vec();
-                buf.get_mut(crc_data_offset..crc_data_offset + 4)
-                    .ok_or(Error::CrcOutOfBounds)?
-                    .fill(0);
-                Self::compute_crc32c(&buf) == *expected
+                let crc_end = crc_data_offset
+                    .checked_add(4)
+                    .filter(|&e| e <= block_bytes.len())
+                    .ok_or(Error::CrcOutOfBounds)?;
+                let mut digest = CRC32C.digest();
+                digest.update(&block_bytes[..crc_data_offset]);
+                digest.update(&[0, 0, 0, 0]);
+                digest.update(&block_bytes[crc_end..]);
+                if digest.finalize() == *expected {
+                    Ok(())
+                } else {
+                    Err(Error::CrcMismatch)
+                }
             }
-        };
-        if valid {
-            Ok(())
-        } else {
-            Err(Error::CrcMismatch)
         }
     }
 

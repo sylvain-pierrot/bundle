@@ -48,7 +48,7 @@ impl<W: AsyncWrite + Unpin> BundleAsyncWriter<W> {
         if self.state != State::Init {
             return Err(Error::IncompleteRead);
         }
-        let mut buf = Encoder::new();
+        let mut buf = Encoder::with_capacity(128);
         primary.encode(&mut buf);
         write_all(&mut self.writer, buf.as_bytes()).await?;
         self.state = State::Blocks;
@@ -59,7 +59,7 @@ impl<W: AsyncWrite + Unpin> BundleAsyncWriter<W> {
         if self.state != State::Blocks {
             return Err(Error::IncompleteRead);
         }
-        let mut buf = Encoder::new();
+        let mut buf = Encoder::with_capacity(64);
         block.encode(&mut buf);
         write_all(&mut self.writer, buf.as_bytes()).await?;
         Ok(())
@@ -76,7 +76,7 @@ impl<W: AsyncWrite + Unpin> BundleAsyncWriter<W> {
         }
         let has_crc = !crc.is_none();
 
-        let mut header = Encoder::new();
+        let mut header = Encoder::with_capacity(16);
         header.write_array(if has_crc { 6 } else { 5 });
         header.write_uint(1);
         header.write_uint(1);

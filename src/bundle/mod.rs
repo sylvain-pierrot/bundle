@@ -3,7 +3,7 @@ pub mod canonical;
 pub mod crc;
 pub mod primary;
 
-use std::io::Read;
+use std::io::{Read, Write};
 
 use aqueduct_cbor::{Encoder, ToCbor};
 use canonical::{BlockData, CanonicalBlock};
@@ -134,7 +134,7 @@ impl<S: Retention> Bundle<S> {
     pub fn encode(&self) -> Result<Vec<u8>, Error> {
         self.validate()?;
 
-        let mut enc = Encoder::new();
+        let mut enc = Encoder::with_capacity(256);
         enc.write_indefinite_array();
         self.primary.encode(&mut enc);
 
@@ -166,7 +166,7 @@ impl<S: Retention> Bundle<S> {
         Ok(enc.into_bytes())
     }
 
-    pub fn encode_to<W: std::io::Write>(&self, writer: W) -> Result<(), Error> {
+    pub fn encode_to<W: Write>(&self, writer: W) -> Result<(), Error> {
         self.validate()?;
         use crate::io::BundleWriter;
 
@@ -198,12 +198,20 @@ impl<S: Retention> Bundle<S> {
         w.finish()?;
         Ok(())
     }
+}
 
-    /// Encode the bundle to an async writer, streaming payload from retention.
-    ///
-    /// Requires `S: Retention` (sync reader for payload data).
-    #[cfg(feature = "async")]
-    pub async fn encode_to_async<W: AsyncWrite + Unpin>(&self, writer: W) -> Result<(), Error> {
+#[cfg(feature = "async")]
+impl<S: AsyncRetention> Bundle<S> {
+    pub async fn async_payload_reader(&self) -> std::io::Result<S::Reader<'_>> {
+        let (offset, len) = self
+            .payload_block()
+            .and_then(|b| b.retained_range())
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no payload block"))?;
+        self.retention.reader(offset, len).await
+    }
+
+    /// Encode the bundle to an async writer, reading payload from async retention.
+    pub async fn async_encode_to<W: AsyncWrite + Unpin>(&self, writer: W) -> Result<(), Error> {
         self.validate()?;
         let mut w = BundleAsyncWriter::new(writer).await?;
         w.write_primary(&self.primary).await?;
@@ -216,6 +224,7 @@ impl<S: Retention> Bundle<S> {
                     let mut reader = self
                         .retention
                         .reader(*offset, *len)
+                        .await
                         .map_err(aqueduct_cbor::Error::from)?;
                     let mut buf = [0u8; 65536];
                     loop {
@@ -232,16 +241,5 @@ impl<S: Retention> Bundle<S> {
 
         w.finish().await?;
         Ok(())
-    }
-}
-
-#[cfg(feature = "async")]
-impl<S: AsyncRetention> Bundle<S> {
-    pub async fn async_payload_reader(&self) -> std::io::Result<S::Reader<'_>> {
-        let (offset, len) = self
-            .payload_block()
-            .and_then(|b| b.retained_range())
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no payload block"))?;
-        self.retention.reader(offset, len).await
     }
 }

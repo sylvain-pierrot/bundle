@@ -181,7 +181,7 @@ impl PrimaryBlock {
         if self.crc.is_none() {
             return Ok(());
         }
-        let mut enc = Encoder::new();
+        let mut enc = Encoder::with_capacity(128);
         self.encode(&mut enc);
         let bytes = enc.as_bytes();
         let crc_size = self.crc.value_size();
