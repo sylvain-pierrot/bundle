@@ -1,8 +1,9 @@
 //! S3-backed retention with multipart upload.
 //!
-//! Streams bytes to S3 via multipart upload during reception. Reads
-//! download byte ranges from S3. The caller provides an [`S3Ops`]
-//! implementation for their S3 client (aws-sdk-s3, rusoto, minio, etc.).
+//! Small payloads use a single `put_object`. Larger payloads
+//! automatically switch to multipart upload (created lazily on
+//! the first part boundary). The caller provides an [`S3Ops`]
+//! implementation for their S3 client.
 
 use std::io::{self, Cursor, Read};
 
@@ -13,6 +14,8 @@ use super::AsyncRetention;
 /// Async S3 operations trait. Implement this for your S3 client.
 #[async_trait]
 pub trait S3Ops: Send + Sync {
+    async fn put_object(&self, bucket: &str, key: &str, data: &[u8]) -> io::Result<()>;
+
     async fn create_multipart_upload(&self, bucket: &str, key: &str) -> io::Result<String>;
 
     async fn upload_part(
@@ -48,9 +51,12 @@ pub trait S3Ops: Send + Sync {
     ) -> io::Result<Vec<u8>>;
 }
 
-const MIN_PART_SIZE: usize = 5 * 1024 * 1024; // S3 minimum
+const PART_SIZE: usize = 8 * 1024 * 1024;
 
-/// S3-backed retention using multipart upload.
+/// S3-backed retention.
+///
+/// Uses `put_object` for payloads that fit in a single buffer,
+/// multipart upload for larger payloads (created lazily).
 pub struct S3Retention<C: S3Ops> {
     client: C,
     bucket: String,
@@ -59,37 +65,40 @@ pub struct S3Retention<C: S3Ops> {
     buffer: Vec<u8>,
     part_number: i32,
     parts: Vec<(i32, String)>,
+    completed: bool,
 }
 
 impl<C: S3Ops> S3Retention<C> {
-    pub async fn new(
-        client: C,
-        bucket: impl Into<String>,
-        key: impl Into<String>,
-    ) -> io::Result<Self> {
-        let bucket = bucket.into();
-        let key = key.into();
-        let upload_id = client.create_multipart_upload(&bucket, &key).await?;
-
-        Ok(Self {
+    pub fn new(client: C, bucket: impl Into<String>, key: impl Into<String>) -> Self {
+        Self {
             client,
-            bucket,
-            key,
-            upload_id: Some(upload_id),
-            buffer: Vec::with_capacity(MIN_PART_SIZE),
+            bucket: bucket.into(),
+            key: key.into(),
+            upload_id: None,
+            buffer: Vec::with_capacity(PART_SIZE),
             part_number: 0,
             parts: Vec::new(),
-        })
+            completed: false,
+        }
+    }
+
+    async fn ensure_multipart(&mut self) -> io::Result<()> {
+        if self.upload_id.is_none() {
+            let id = self
+                .client
+                .create_multipart_upload(&self.bucket, &self.key)
+                .await?;
+            self.upload_id = Some(id);
+        }
+        Ok(())
     }
 
     async fn upload_buffer(&mut self) -> io::Result<()> {
         if self.buffer.is_empty() {
             return Ok(());
         }
-        let upload_id = self
-            .upload_id
-            .as_ref()
-            .ok_or_else(|| io::Error::other("upload already completed"))?;
+        self.ensure_multipart().await?;
+        let upload_id = self.upload_id.as_ref().unwrap();
 
         self.part_number += 1;
         let etag = self
@@ -110,7 +119,7 @@ impl<C: S3Ops> S3Retention<C> {
 
 impl<C: S3Ops> Drop for S3Retention<C> {
     fn drop(&mut self) {
-        if self.upload_id.is_some() {
+        if !self.completed && (self.upload_id.is_some() || !self.buffer.is_empty()) {
             eprintln!(
                 "S3Retention dropped without flush() or discard(): bucket={}, key={}",
                 self.bucket, self.key
@@ -138,27 +147,26 @@ impl<C: S3Ops> AsyncRetention for S3Retention<C> {
 
     async fn write(&mut self, data: &[u8]) -> io::Result<usize> {
         self.buffer.extend_from_slice(data);
-        if self.buffer.len() >= MIN_PART_SIZE {
+        if self.buffer.len() >= PART_SIZE {
             self.upload_buffer().await?;
         }
         Ok(data.len())
     }
 
     async fn flush(&mut self) -> io::Result<()> {
-        self.upload_buffer().await?;
-        if let Some(upload_id) = self.upload_id.take() {
-            if self.parts.is_empty() {
-                self.part_number += 1;
-                let etag = self
-                    .client
-                    .upload_part(&self.bucket, &self.key, &upload_id, self.part_number, &[])
-                    .await?;
-                self.parts.push((self.part_number, etag));
-            }
+        if self.upload_id.is_some() {
+            self.upload_buffer().await?;
+            let upload_id = self.upload_id.take().unwrap();
             self.client
                 .complete_multipart_upload(&self.bucket, &self.key, &upload_id, &self.parts)
                 .await?;
+        } else {
+            self.client
+                .put_object(&self.bucket, &self.key, &self.buffer)
+                .await?;
+            self.buffer.clear();
         }
+        self.completed = true;
         Ok(())
     }
 
@@ -185,6 +193,7 @@ impl<C: S3Ops> AsyncRetention for S3Retention<C> {
         }
         self.buffer.clear();
         self.parts.clear();
+        self.completed = true;
         Ok(())
     }
 }
