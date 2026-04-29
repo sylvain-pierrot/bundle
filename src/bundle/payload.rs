@@ -14,11 +14,3 @@ pub struct PayloadRef {
     /// Length of the payload data in bytes.
     pub data_len: u64,
 }
-
-impl PayloadRef {
-    /// Extract the payload data from the source buffer.
-    pub fn data<'a>(&self, source: &'a [u8]) -> Option<&'a [u8]> {
-        let start = self.data_offset as usize;
-        source.get(start..start.checked_add(self.data_len as usize)?)
-    }
-}

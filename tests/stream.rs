@@ -50,7 +50,7 @@ fn stream_roundtrip_minimal() {
     assert_eq!(reader.primary().unwrap().version, 7);
     assert_eq!(reader.primary().unwrap().lifetime, 3_600_000_000);
     let bundle = reader.into_bundle().unwrap();
-    assert!(bundle.payload().crc.is_none());
+    assert!(bundle.payload_crc().is_none());
 }
 
 #[test]
@@ -100,8 +100,8 @@ fn stream_roundtrip_with_crc() {
     assert_eq!(read_payload, payload);
 
     let bundle = reader.into_bundle().unwrap();
-    assert_eq!(bundle.payload().crc.crc_type(), 1);
-    match bundle.payload().crc {
+    assert_eq!(bundle.payload_crc().crc_type(), 1);
+    match bundle.payload_crc() {
         Crc::Crc16(v) => assert_ne!(v, 0),
         _ => panic!("expected Crc16"),
     }
@@ -192,7 +192,7 @@ fn stream_walk() {
     }
 
     let bundle = reader.into_bundle().unwrap();
-    assert!(bundle.payload().crc.is_none());
+    assert!(bundle.payload_crc().is_none());
 }
 
 #[test]
@@ -470,5 +470,137 @@ fn reader_walk_partial() {
         }
     }
     let bundle = reader.into_bundle().unwrap();
-    assert_eq!(bundle.payload().data_len, 100);
+    assert_eq!(bundle.payload_len(), 100);
+}
+
+// ---------------------------------------------------------------------------
+// Retention tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn memory_retention_roundtrip() {
+    let payload = b"memory retention test";
+    let bundle = aqueduct::Bundle::builder(
+        Eid::Null,
+        Eid::Null,
+        1000,
+        payload,
+        aqueduct::MemoryRetention::new(),
+    )
+    .unwrap()
+    .build();
+
+    let encoded = bundle.encode().unwrap();
+    let decoded = aqueduct::Bundle::from_bytes(&encoded, aqueduct::MemoryRetention::new()).unwrap();
+
+    let mut buf = Vec::new();
+    decoded.payload_reader().read_to_end(&mut buf).unwrap();
+    assert_eq!(buf, payload);
+
+    let reencoded = decoded.encode().unwrap();
+    assert_eq!(encoded, reencoded);
+}
+
+#[test]
+fn disk_retention_roundtrip() {
+    let path = "/tmp/aqueduct_test_disk_retention.bin";
+    let payload = b"disk retention test payload data";
+
+    let bundle = aqueduct::Bundle::builder(
+        Eid::Ipn {
+            allocator_id: 0,
+            node_number: 1,
+            service_number: 1,
+        },
+        Eid::Null,
+        1000,
+        payload,
+        aqueduct::MemoryRetention::new(),
+    )
+    .unwrap()
+    .build();
+
+    let encoded = bundle.encode().unwrap();
+
+    let disk = aqueduct::DiskRetention::new(path).unwrap();
+    let decoded = aqueduct::Bundle::from_bytes(&encoded, disk).unwrap();
+
+    assert_eq!(decoded.payload_len(), payload.len() as u64);
+    assert_eq!(
+        decoded.primary().dest_eid,
+        Eid::Ipn {
+            allocator_id: 0,
+            node_number: 1,
+            service_number: 1,
+        }
+    );
+
+    let mut buf = Vec::new();
+    decoded.payload_reader().read_to_end(&mut buf).unwrap();
+    assert_eq!(buf, payload);
+
+    let reencoded = decoded.encode().unwrap();
+    assert_eq!(encoded, reencoded);
+
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn disk_retention_large_payload() {
+    let path = "/tmp/aqueduct_test_disk_large.bin";
+    let payload = vec![0xCDu8; 1024 * 1024]; // 1 MB
+
+    let bundle = aqueduct::Bundle::builder(
+        Eid::Null,
+        Eid::Null,
+        1000,
+        &payload,
+        aqueduct::MemoryRetention::new(),
+    )
+    .unwrap()
+    .build();
+
+    let encoded = bundle.encode().unwrap();
+
+    let disk = aqueduct::DiskRetention::new(path).unwrap();
+    let decoded = aqueduct::Bundle::from_bytes(&encoded, disk).unwrap();
+
+    let mut buf = Vec::new();
+    decoded.payload_reader().read_to_end(&mut buf).unwrap();
+    assert_eq!(buf.len(), payload.len());
+    assert!(buf.iter().all(|&b| b == 0xCD));
+
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn disk_retention_from_stream() {
+    let bundle_path = "/tmp/aqueduct_test_bundle_stream.bin";
+    let retention_path = "/tmp/aqueduct_test_retention_stream.bin";
+    let payload = b"streaming to disk";
+
+    // Write bundle to file
+    let bundle = aqueduct::Bundle::builder(
+        Eid::Null,
+        Eid::Null,
+        1000,
+        payload,
+        aqueduct::MemoryRetention::new(),
+    )
+    .unwrap()
+    .build();
+    let encoded = bundle.encode().unwrap();
+    std::fs::write(bundle_path, &encoded).unwrap();
+
+    // Read from file stream → DiskRetention
+    let file = std::fs::File::open(bundle_path).unwrap();
+    let disk = aqueduct::DiskRetention::new(retention_path).unwrap();
+    let decoded = aqueduct::Bundle::from_stream(file, disk).unwrap();
+
+    let mut buf = Vec::new();
+    decoded.payload_reader().read_to_end(&mut buf).unwrap();
+    assert_eq!(buf, payload);
+
+    std::fs::remove_file(bundle_path).unwrap();
+    std::fs::remove_file(retention_path).unwrap();
 }

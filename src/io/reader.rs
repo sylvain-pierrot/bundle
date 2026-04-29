@@ -194,7 +194,8 @@ impl<R: Read, S: Retention> BundleReader<R, S> {
 
         let primary = self.primary.ok_or(Error::InvalidPayloadCount(0))?;
 
-        let (_source, retention) = self.dec.into_inner().into_parts();
+        let (_source, mut retention) = self.dec.into_inner().into_parts();
+        retention.flush().map_err(aqueduct_cbor::Error::from)?;
 
         Ok(Bundle::from_parts(
             primary,

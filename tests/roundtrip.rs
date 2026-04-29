@@ -40,7 +40,7 @@ fn roundtrip_empty_payload() {
     let encoded = bundle.encode().unwrap();
     let decoded = Bundle::from_bytes(&encoded, MemoryRetention::new()).unwrap();
 
-    assert_eq!(decoded.payload().data_len, 0);
+    assert_eq!(decoded.payload_len(), 0);
 
     let reencoded = decoded.encode().unwrap();
     assert_eq!(encoded, reencoded);
@@ -342,29 +342,4 @@ fn crc_verify_detects_corruption() {
         let reencoded = bad.encode().unwrap();
         assert_ne!(reencoded, corrupted);
     }
-}
-
-#[test]
-fn payload_ref_data_bounds_check() {
-    use aqueduct::BlockFlags;
-    use aqueduct::PayloadRef;
-
-    let pr = PayloadRef {
-        flags: BlockFlags::from_bits(0),
-        crc: Crc::None,
-        data_offset: 10,
-        data_len: 5,
-    };
-    // Valid range
-    let buf = vec![0u8; 20];
-    assert!(pr.data(&buf).is_some());
-    assert_eq!(pr.data(&buf).unwrap().len(), 5);
-
-    // Out of bounds
-    let small = vec![0u8; 12];
-    assert!(pr.data(&small).is_none());
-
-    // Offset past end
-    let tiny = vec![0u8; 5];
-    assert!(pr.data(&tiny).is_none());
 }

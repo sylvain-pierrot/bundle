@@ -16,6 +16,8 @@ mod decode;
 mod reader;
 pub mod retention;
 pub(crate) mod tee;
+mod writer;
 
 pub use reader::{BlockEvent, BundleReader, PayloadReader};
-pub use retention::{MemoryRetention, Retention};
+pub use retention::{DiskRetention, MemoryRetention, Retention};
+pub use writer::BundleWriter;
