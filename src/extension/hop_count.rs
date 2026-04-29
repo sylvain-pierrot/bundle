@@ -29,8 +29,8 @@ impl Extension for HopCount {
                 actual: len,
             });
         }
-        let limit = dec.read_uint()? as u8;
-        let count = dec.read_uint()? as u8;
+        let limit = u8::try_from(dec.read_uint()?).map_err(|_| Error::IntegerOverflow)?;
+        let count = u8::try_from(dec.read_uint()?).map_err(|_| Error::IntegerOverflow)?;
         Ok(HopCount { limit, count })
     }
 

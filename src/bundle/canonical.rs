@@ -136,10 +136,7 @@ impl CanonicalBlock {
         }
         match &self.data {
             BlockData::Inline(data) => E::parse(data),
-            BlockData::Retained { .. } => Err(Error::BlockTypeMismatch {
-                expected: E::BLOCK_TYPE,
-                actual: self.block_type,
-            }),
+            BlockData::Retained { .. } => Err(Error::PayloadNotInline),
         }
     }
 

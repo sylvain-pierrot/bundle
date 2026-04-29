@@ -48,4 +48,9 @@ impl Retention for MemoryRetention {
         }
         Ok(&self.data[start..end])
     }
+
+    fn discard(&mut self) -> std::io::Result<()> {
+        self.data.clear();
+        Ok(())
+    }
 }

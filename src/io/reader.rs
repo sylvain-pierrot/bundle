@@ -153,22 +153,36 @@ impl<R: Read, S: Retention> BundleReader<R, S> {
     }
 
     pub fn into_bundle(mut self) -> Result<Bundle<S>, Error> {
-        while let Some(event) = self.next_block()? {
-            if let BlockEvent::Payload { len } = event {
-                self.walk(len)?;
+        let err = loop {
+            match self.next_block() {
+                Ok(Some(BlockEvent::Payload { len })) => {
+                    if let Err(e) = self.walk(len) {
+                        break e;
+                    }
+                }
+                Ok(Some(BlockEvent::Extension(_))) => {}
+                Ok(None) => {
+                    if self.state != State::Done {
+                        break Error::IncompleteRead;
+                    }
+                    let primary = match self.primary {
+                        Some(p) => p,
+                        None => break Error::InvalidPayloadCount(0),
+                    };
+                    let (_source, mut retention) = self.dec.into_inner().into_parts();
+                    if let Err(e) = retention.flush() {
+                        let _ = retention.discard();
+                        return Err(Error::Cbor(aqueduct_cbor::Error::from(e)));
+                    }
+                    return Ok(Bundle::from_parts(primary, self.blocks, retention));
+                }
+                Err(e) => break e,
             }
-        }
-
-        if self.state != State::Done {
-            return Err(Error::IncompleteRead);
-        }
-
-        let primary = self.primary.ok_or(Error::InvalidPayloadCount(0))?;
+        };
 
         let (_source, mut retention) = self.dec.into_inner().into_parts();
-        retention.flush().map_err(aqueduct_cbor::Error::from)?;
-
-        Ok(Bundle::from_parts(primary, self.blocks, retention))
+        let _ = retention.discard();
+        Err(err)
     }
 }
 

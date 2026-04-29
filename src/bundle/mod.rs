@@ -184,13 +184,13 @@ impl<S: Retention> Bundle<S> {
         let source = retention
             .reader(0, len)
             .map_err(aqueduct_cbor::Error::from)?;
-        let noop = NoopRetention;
-        let noop_bundle = BundleReader::new(source, noop).into_bundle()?;
-        Ok(Bundle::from_parts(
-            noop_bundle.primary().clone(),
-            noop_bundle.blocks().to_vec(),
-            retention,
-        ))
+        let noop_bundle = BundleReader::new(source, NoopRetention).into_bundle()?;
+        let Bundle {
+            primary,
+            blocks,
+            retention: _,
+        } = noop_bundle;
+        Ok(Bundle::from_parts(primary, blocks, retention))
     }
 
     pub fn payload_reader(&self) -> std::io::Result<S::Reader<'_>> {

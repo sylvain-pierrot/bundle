@@ -74,8 +74,8 @@ pub(crate) fn decode_ipn_3elem(
     raw_node: u64,
     service_number: u64,
 ) -> Result<Eid, Error> {
-    let allocator_id = u32::try_from(raw_alloc).map_err(|_| Error::EidOverflow)?;
-    let node_number = u32::try_from(raw_node).map_err(|_| Error::EidOverflow)?;
+    let allocator_id = u32::try_from(raw_alloc).map_err(|_| Error::IntegerOverflow)?;
+    let node_number = u32::try_from(raw_node).map_err(|_| Error::IntegerOverflow)?;
     if allocator_id == 0 && node_number == 0 && service_number == 0 {
         Ok(Eid::Null)
     } else {

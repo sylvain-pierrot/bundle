@@ -44,8 +44,11 @@ pub enum Error {
     #[error("invalid EID structure")]
     InvalidEid,
 
-    #[error("EID value overflows u32")]
-    EidOverflow,
+    #[error("integer value overflows target type")]
+    IntegerOverflow,
+
+    #[error("cannot parse retained block as extension")]
+    PayloadNotInline,
 
     #[error("payload data exceeds declared length")]
     PayloadOverflow,

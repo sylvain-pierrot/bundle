@@ -9,12 +9,19 @@ pub use disk::DiskRetention;
 pub use memory::MemoryRetention;
 
 /// Storage backend where bundle bytes are retained.
+///
+/// Bytes are written during reception via [`Write`]. If parsing
+/// succeeds, the retention holds a valid bundle. If parsing fails,
+/// call [`discard`](Self::discard) to roll back.
 pub trait Retention: Write {
     type Reader<'a>: Read
     where
         Self: 'a;
 
     fn reader(&self, offset: u64, len: u64) -> io::Result<Self::Reader<'_>>;
+
+    /// Discard all stored bytes. Called when parsing fails.
+    fn discard(&mut self) -> io::Result<()>;
 }
 
 /// Async storage backend for bundle retention.
@@ -25,6 +32,7 @@ pub trait AsyncRetention: futures_io::AsyncWrite + Unpin {
         Self: 'a;
 
     fn reader(&self, offset: u64, len: u64) -> io::Result<Self::Reader<'_>>;
+    fn discard(&mut self) -> io::Result<()>;
 }
 
 /// No-op retention that discards writes.
@@ -45,5 +53,9 @@ impl Retention for NoopRetention {
 
     fn reader(&self, _offset: u64, _len: u64) -> io::Result<Self::Reader<'_>> {
         Ok(&[])
+    }
+
+    fn discard(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }

@@ -99,9 +99,10 @@ impl<W: Write> BundleWriter<W> {
     pub fn end_payload(&mut self) -> Result<(), Error> {
         if let Some(mut hasher) = self.payload_hasher.take() {
             let crc_size = self.payload_crc.value_size();
-            let mut placeholder = Encoder::new();
-            placeholder.write_bstr(&vec![0u8; crc_size]);
-            hasher.update(placeholder.as_bytes());
+            // CBOR bstr header (1 byte) + zeroed CRC value
+            let mut zeroed = [0u8; 5]; // max: 1 header + 4 value
+            zeroed[0] = 0x40 | crc_size as u8; // CBOR bstr major type 2, length < 24
+            hasher.update(&zeroed[..1 + crc_size]);
 
             let computed = hasher.finalize();
             let mut crc_buf = [0u8; 4];

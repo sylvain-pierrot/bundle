@@ -77,4 +77,8 @@ impl Retention for DiskRetention {
             remaining: len,
         })
     }
+
+    fn discard(&mut self) -> std::io::Result<()> {
+        std::fs::remove_file(&self.path)
+    }
 }
