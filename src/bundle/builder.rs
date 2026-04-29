@@ -1,9 +1,10 @@
 //! Builder for constructing bundles with sensible defaults.
 
 use crate::bundle::Bundle;
-use crate::bundle::canonical::{BlockFlags, CanonicalBlock};
+use crate::bundle::canonical::{
+    BlockData, BlockFlags, CanonicalBlock, PAYLOAD_BLOCK_NUMBER, PAYLOAD_BLOCK_TYPE,
+};
 use crate::bundle::crc::Crc;
-use crate::bundle::payload::PayloadRef;
 use crate::bundle::primary::{BundleFlags, CreationTimestamp, FragmentInfo, PrimaryBlock};
 use crate::eid::Eid;
 use crate::io::retention::Retention;
@@ -18,7 +19,7 @@ pub struct BundleBuilder<S> {
     rpt_eid: Eid<'static>,
     creation_ts: CreationTimestamp,
     fragment: Option<FragmentInfo>,
-    extensions: Vec<CanonicalBlock>,
+    blocks: Vec<CanonicalBlock>,
     retention: S,
 }
 
@@ -43,7 +44,7 @@ impl<S: Retention> BundleBuilder<S> {
             rpt_eid: Eid::Null,
             creation_ts: CreationTimestamp { time: 0, seq: 0 },
             fragment: None,
-            extensions: Vec::new(),
+            blocks: Vec::new(),
             retention,
         })
     }
@@ -103,11 +104,28 @@ impl<S: Retention> BundleBuilder<S> {
     }
 
     pub fn extension(mut self, block: CanonicalBlock) -> Self {
-        self.extensions.push(block);
+        self.blocks.push(block);
         self
     }
 
-    pub fn build(self) -> Bundle<S> {
+    pub fn build(mut self) -> Bundle<S> {
+        // RFC 9171: null source requires no_fragment flag
+        if self.src_node_id.is_null() {
+            self.bundle_flags |= 0x000004;
+        }
+
+        // Add the payload block
+        self.blocks.push(CanonicalBlock {
+            block_type: PAYLOAD_BLOCK_TYPE,
+            block_number: PAYLOAD_BLOCK_NUMBER,
+            flags: BlockFlags::from_bits(0),
+            crc: Crc::None,
+            data: BlockData::Retained {
+                offset: 0,
+                len: self.payload_len,
+            },
+        });
+
         Bundle::from_parts(
             PrimaryBlock {
                 version: 7,
@@ -120,13 +138,7 @@ impl<S: Retention> BundleBuilder<S> {
                 lifetime: self.lifetime,
                 fragment: self.fragment,
             },
-            self.extensions,
-            PayloadRef {
-                flags: BlockFlags::from_bits(0),
-                crc: Crc::None,
-                data_offset: 0,
-                data_len: self.payload_len,
-            },
+            self.blocks,
             self.retention,
         )
     }

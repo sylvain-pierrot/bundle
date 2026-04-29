@@ -1,4 +1,4 @@
-use aqueduct_cbor::{Decoder, Encoder};
+use aqueduct_cbor::{Encoder, StreamDecoder};
 
 use crate::error::Error;
 use crate::extension::Extension;
@@ -13,7 +13,7 @@ impl Extension for BundleAge {
     const BLOCK_TYPE: u64 = 7;
 
     fn parse(data: &[u8]) -> Result<Self, Error> {
-        let mut dec = Decoder::new(data);
+        let mut dec = StreamDecoder::new(data);
         let millis = dec.read_uint()?;
         Ok(BundleAge { millis })
     }

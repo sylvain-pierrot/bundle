@@ -1,17 +1,12 @@
 use std::borrow::Cow;
 
-use aqueduct_cbor::{Decoder, Encoder, FromCbor, ToCbor, UintOrTstr};
+use std::io::Read;
+
+use aqueduct_cbor::{Encoder, StreamDecoder, ToCbor, UintOrString};
 
 use crate::error::Error;
 
 /// Endpoint identifier (RFC 9171 §4.2.5, updated by RFC 9758).
-///
-/// Uses `Cow<str>` for the DTN scheme: zero-copy when borrowed from an input
-/// buffer, owned when constructed or parsed from a stream.
-///
-/// The IPN variant carries an allocator identifier, node number, and service
-/// number per RFC 9758 §3. An IPN EID with all three components set to zero
-/// is the null endpoint, equivalent to `dtn:none`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Eid<'a> {
     Null,
@@ -37,7 +32,6 @@ impl Eid<'_> {
         )
     }
 
-    /// Convert to an owned `Eid<'static>` by cloning any borrowed data.
     pub fn into_owned(self) -> Eid<'static> {
         match self {
             Eid::Null => Eid::Null,
@@ -55,69 +49,63 @@ impl Eid<'_> {
     }
 }
 
-impl<'a> FromCbor<'a> for Eid<'a> {
-    type Error = Error;
-
-    fn decode(dec: &mut Decoder<'a>) -> Result<Self, Self::Error> {
+impl Eid<'static> {
+    pub(crate) fn decode<R: Read>(dec: &mut StreamDecoder<R>) -> Result<Self, Error> {
         let len = dec.read_array_len()?;
         if len != 2 {
             return Err(Error::InvalidEid);
         }
         let scheme = dec.read_uint()?;
         match scheme {
-            1 => {
-                // dtn scheme: SSP is 0 for dtn:none, or a text string
-                match dec.read_uint_or_tstr()? {
-                    UintOrTstr::Uint(0) => Ok(Eid::Null),
-                    UintOrTstr::Uint(_) => Err(Error::InvalidEid),
-                    UintOrTstr::Tstr(s) => Ok(Eid::Dtn(Cow::Borrowed(s))),
-                }
-            }
+            1 => match dec.read_uint_or_tstr()? {
+                UintOrString::Uint(0) => Ok(Eid::Null),
+                UintOrString::Uint(_) => Err(Error::InvalidEid),
+                UintOrString::Tstr(s) => Ok(Eid::Dtn(Cow::Owned(s))),
+            },
             2 => {
-                // ipn scheme (RFC 9758 §6): SSP is 2-element or 3-element array
                 let inner_len = dec.read_array_len()?;
                 match inner_len {
-                    2 => {
-                        // Two-element: [fqnn: u64, service_number: u64]
-                        // fqnn = (allocator_id << 32) | node_number
-                        let fqnn = dec.read_uint()?;
-                        let service_number = dec.read_uint()?;
-                        let allocator_id = (fqnn >> 32) as u32;
-                        let node_number = fqnn as u32;
-                        if allocator_id == 0 && node_number == 0 && service_number == 0 {
-                            Ok(Eid::Null)
-                        } else {
-                            Ok(Eid::Ipn {
-                                allocator_id,
-                                node_number,
-                                service_number,
-                            })
-                        }
-                    }
-                    3 => {
-                        // Three-element: [allocator_id, node_number, service_number]
-                        let raw_alloc = dec.read_uint()?;
-                        let raw_node = dec.read_uint()?;
-                        let allocator_id =
-                            u32::try_from(raw_alloc).map_err(|_| Error::EidOverflow)?;
-                        let node_number =
-                            u32::try_from(raw_node).map_err(|_| Error::EidOverflow)?;
-                        let service_number = dec.read_uint()?;
-                        if allocator_id == 0 && node_number == 0 && service_number == 0 {
-                            Ok(Eid::Null)
-                        } else {
-                            Ok(Eid::Ipn {
-                                allocator_id,
-                                node_number,
-                                service_number,
-                            })
-                        }
-                    }
+                    2 => Ok(decode_ipn_2elem(dec.read_uint()?, dec.read_uint()?)),
+                    3 => decode_ipn_3elem(dec.read_uint()?, dec.read_uint()?, dec.read_uint()?),
                     _ => Err(Error::InvalidEid),
                 }
             }
             _ => Err(Error::InvalidEidScheme(scheme)),
         }
+    }
+}
+
+/// Decode IPN SSP from two parsed elements (2-element or 3-element form).
+/// Shared by both buffer-based and streaming decoders.
+pub(crate) fn decode_ipn_2elem(fqnn: u64, service_number: u64) -> Eid<'static> {
+    let allocator_id = (fqnn >> 32) as u32;
+    let node_number = fqnn as u32;
+    if allocator_id == 0 && node_number == 0 && service_number == 0 {
+        Eid::Null
+    } else {
+        Eid::Ipn {
+            allocator_id,
+            node_number,
+            service_number,
+        }
+    }
+}
+
+pub(crate) fn decode_ipn_3elem(
+    raw_alloc: u64,
+    raw_node: u64,
+    service_number: u64,
+) -> Result<Eid<'static>, Error> {
+    let allocator_id = u32::try_from(raw_alloc).map_err(|_| Error::EidOverflow)?;
+    let node_number = u32::try_from(raw_node).map_err(|_| Error::EidOverflow)?;
+    if allocator_id == 0 && node_number == 0 && service_number == 0 {
+        Ok(Eid::Null)
+    } else {
+        Ok(Eid::Ipn {
+            allocator_id,
+            node_number,
+            service_number,
+        })
     }
 }
 
@@ -142,12 +130,10 @@ impl ToCbor for Eid<'_> {
                 enc.write_array(2);
                 enc.write_uint(2);
                 if *allocator_id == 0 {
-                    // Default allocator: use two-element encoding (more compact)
                     enc.write_array(2);
                     enc.write_uint(*node_number as u64);
                     enc.write_uint(*service_number);
                 } else {
-                    // Non-default allocator: use three-element encoding
                     enc.write_array(3);
                     enc.write_uint(*allocator_id as u64);
                     enc.write_uint(*node_number as u64);
@@ -166,7 +152,7 @@ mod tests {
     fn roundtrip_null() {
         let mut enc = Encoder::new();
         Eid::Null.encode(&mut enc);
-        let mut dec = Decoder::new(enc.as_bytes());
+        let mut dec = StreamDecoder::new(enc.as_bytes());
         assert_eq!(Eid::decode(&mut dec).unwrap(), Eid::Null);
     }
 
@@ -175,7 +161,7 @@ mod tests {
         let eid = Eid::Dtn(Cow::Borrowed("//node1/incoming"));
         let mut enc = Encoder::new();
         eid.encode(&mut enc);
-        let mut dec = Decoder::new(enc.as_bytes());
+        let mut dec = StreamDecoder::new(enc.as_bytes());
         assert_eq!(Eid::decode(&mut dec).unwrap(), eid);
     }
 
@@ -188,7 +174,7 @@ mod tests {
         };
         let mut enc = Encoder::new();
         eid.encode(&mut enc);
-        let mut dec = Decoder::new(enc.as_bytes());
+        let mut dec = StreamDecoder::new(enc.as_bytes());
         assert_eq!(Eid::decode(&mut dec).unwrap(), eid);
     }
 
@@ -201,7 +187,7 @@ mod tests {
         };
         let mut enc = Encoder::new();
         eid.encode(&mut enc);
-        let mut dec = Decoder::new(enc.as_bytes());
+        let mut dec = StreamDecoder::new(enc.as_bytes());
         assert_eq!(Eid::decode(&mut dec).unwrap(), eid);
     }
 
@@ -217,19 +203,16 @@ mod tests {
 
     #[test]
     fn decode_two_element_with_allocator() {
-        // Two-element encoding of ipn:977000.100.1
-        // fqnn = (977000 << 32) | 100 = 0x000EE868_00000064
         let mut enc = Encoder::new();
         enc.write_array(2);
-        enc.write_uint(2); // ipn scheme
+        enc.write_uint(2);
         enc.write_array(2);
-        enc.write_uint(0x000EE868_00000064); // fqnn
-        enc.write_uint(1); // service
+        enc.write_uint(0x000EE868_00000064);
+        enc.write_uint(1);
 
-        let mut dec = Decoder::new(enc.as_bytes());
-        let eid = Eid::decode(&mut dec).unwrap();
+        let mut dec = StreamDecoder::new(enc.as_bytes());
         assert_eq!(
-            eid,
+            Eid::decode(&mut dec).unwrap(),
             Eid::Ipn {
                 allocator_id: 977000,
                 node_number: 100,
@@ -240,7 +223,6 @@ mod tests {
 
     #[test]
     fn ipn_null_decoded_from_cbor() {
-        // ipn:0.0.0 encoded as two-element [0, 0] should decode as Null
         let mut enc = Encoder::new();
         enc.write_array(2);
         enc.write_uint(2);
@@ -248,7 +230,7 @@ mod tests {
         enc.write_uint(0);
         enc.write_uint(0);
 
-        let mut dec = Decoder::new(enc.as_bytes());
+        let mut dec = StreamDecoder::new(enc.as_bytes());
         assert_eq!(Eid::decode(&mut dec).unwrap(), Eid::Null);
     }
 }

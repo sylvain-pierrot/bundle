@@ -89,12 +89,22 @@ fn roundtrip_with_extensions() {
     let decoded = Bundle::from_bytes(&encoded, MemoryRetention::new()).unwrap();
 
     assert_eq!(decoded.primary().dest_eid, dest);
-    assert_eq!(decoded.extensions().len(), 2);
+    assert_eq!(decoded.extensions().count(), 2);
 
-    let hop = decoded.extensions()[0].parse_ext::<HopCount>().unwrap();
+    let hop = decoded
+        .extensions()
+        .next()
+        .unwrap()
+        .parse_ext::<HopCount>()
+        .unwrap();
     assert_eq!(hop.limit, 30);
 
-    let age = decoded.extensions()[1].parse_ext::<BundleAge>().unwrap();
+    let age = decoded
+        .extensions()
+        .nth(1)
+        .unwrap()
+        .parse_ext::<BundleAge>()
+        .unwrap();
     assert_eq!(age.millis, 12345);
 
     let reencoded = decoded.encode().unwrap();
@@ -249,13 +259,13 @@ fn validate_duplicate_block_numbers() {
     let mut bundle = Bundle::builder(Eid::Null, Eid::Null, 1000, b"", MemoryRetention::new())
         .unwrap()
         .build();
-    bundle.extensions_mut().push(CanonicalBlock::from_ext(
+    bundle.blocks_mut().push(CanonicalBlock::from_ext(
         2,
         BlockFlags::from_bits(0),
         Crc::None,
         &hc,
     ));
-    bundle.extensions_mut().push(CanonicalBlock::from_ext(
+    bundle.blocks_mut().push(CanonicalBlock::from_ext(
         2,
         BlockFlags::from_bits(0),
         Crc::None,

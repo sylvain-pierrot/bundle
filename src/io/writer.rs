@@ -9,41 +9,44 @@ use crate::bundle::crc::{Crc, CrcHasher};
 use crate::bundle::primary::PrimaryBlock;
 use crate::error::Error;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum State {
+    Init,
+    Blocks,
+    Payload,
+    Done,
+}
+
 /// Streaming bundle encoder.
-///
-/// Blocks are encoded from in-memory structs. Payload data is written in
-/// chunks via [`write_payload_data`](Self::write_payload_data) — it is never
-/// buffered in full.
 pub struct BundleWriter<W> {
     enc: StreamEncoder<W>,
+    state: State,
     payload_hasher: Option<CrcHasher>,
     payload_crc: Crc,
     payload_remaining: u64,
 }
 
 impl<W: Write> BundleWriter<W> {
-    /// Create a new writer, emitting the bundle's indefinite-array start.
     pub fn new(writer: W) -> Result<Self, Error> {
         let mut enc = StreamEncoder::new(writer);
         enc.write_indefinite_array()?;
         Ok(Self {
             enc,
+            state: State::Init,
             payload_hasher: None,
             payload_crc: Crc::None,
             payload_remaining: 0,
         })
     }
 
-    /// Write the primary block (encoded to a temp buffer, CRC computed, then
-    /// flushed to the stream).
     pub fn write_primary(&mut self, primary: &PrimaryBlock<'_>) -> Result<(), Error> {
         let mut buf = Encoder::new();
         primary.encode(&mut buf);
         self.enc.write_raw(buf.as_bytes())?;
+        self.state = State::Blocks;
         Ok(())
     }
 
-    /// Write an extension block.
     pub fn write_extension(&mut self, block: &CanonicalBlock) -> Result<(), Error> {
         let mut buf = Encoder::new();
         block.encode(&mut buf);
@@ -51,9 +54,6 @@ impl<W: Write> BundleWriter<W> {
         Ok(())
     }
 
-    /// Begin writing the payload block. After this call, use
-    /// [`write_payload_data`](Self::write_payload_data) to stream the payload,
-    /// then [`end_payload`](Self::end_payload) to finalize.
     pub fn begin_payload(
         &mut self,
         flags: BlockFlags,
@@ -62,18 +62,16 @@ impl<W: Write> BundleWriter<W> {
     ) -> Result<(), Error> {
         let has_crc = !crc.is_none();
 
-        // Encode the payload block header (everything before the data bytes)
         let mut header = Encoder::new();
         header.write_array(if has_crc { 6 } else { 5 });
-        header.write_uint(1); // block type = payload
-        header.write_uint(1); // block number
+        header.write_uint(1);
+        header.write_uint(1);
         header.write_uint(flags.bits());
         header.write_uint(crc.crc_type());
         header.write_bstr_header(data_len);
 
         self.enc.write_raw(header.as_bytes())?;
 
-        // Start incremental CRC if needed
         self.payload_hasher = CrcHasher::new(&crc);
         if let Some(h) = &mut self.payload_hasher {
             h.update(header.as_bytes());
@@ -81,11 +79,10 @@ impl<W: Write> BundleWriter<W> {
 
         self.payload_crc = crc;
         self.payload_remaining = data_len;
-
+        self.state = State::Payload;
         Ok(())
     }
 
-    /// Write a chunk of payload data.
     pub fn write_payload_data(&mut self, data: &[u8]) -> Result<(), Error> {
         let len = data.len() as u64;
         if len > self.payload_remaining {
@@ -99,7 +96,6 @@ impl<W: Write> BundleWriter<W> {
         Ok(())
     }
 
-    /// Finalize the payload block — computes and writes the CRC if needed.
     pub fn end_payload(&mut self) -> Result<(), Error> {
         if let Some(mut hasher) = self.payload_hasher.take() {
             let crc_size = self.payload_crc.value_size();
@@ -112,14 +108,14 @@ impl<W: Write> BundleWriter<W> {
             let n = computed.write_value(&mut crc_buf);
             self.enc.write_bstr(&crc_buf[..n])?;
         }
-
+        self.state = State::Blocks;
         Ok(())
     }
 
-    /// Write the closing break code and flush. Returns the inner writer.
     pub fn finish(mut self) -> Result<W, Error> {
         self.enc.write_break()?;
         self.enc.flush()?;
+        self.state = State::Done;
         Ok(self.enc.into_inner())
     }
 }

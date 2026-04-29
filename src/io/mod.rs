@@ -1,6 +1,5 @@
 //! Streaming bundle I/O.
 
-mod decode;
 mod reader;
 pub mod retention;
 pub(crate) mod tee;

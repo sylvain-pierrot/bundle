@@ -5,15 +5,12 @@ use std::io::Read;
 use aqueduct_cbor::StreamDecoder;
 
 use crate::bundle::Bundle;
-use crate::bundle::canonical::{BlockFlags, CanonicalBlock};
+use crate::bundle::canonical::{BlockData, CanonicalBlock};
 use crate::bundle::crc::Crc;
-use crate::bundle::payload::PayloadRef;
 use crate::bundle::primary::PrimaryBlock;
 use crate::error::Error;
 use crate::io::retention::Retention;
 use crate::io::tee::TeeReader;
-
-use super::decode::{decode_canonical_body, decode_crc_value, decode_primary};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
@@ -26,12 +23,10 @@ enum State {
 
 /// What [`BundleReader::next_block`] yielded.
 pub enum BlockEvent {
-    /// An extension block was parsed. The index refers to
-    /// [`BundleReader::extensions`].
+    /// An extension block was parsed (index into [`BundleReader::blocks`]).
     Extension(usize),
-    Payload {
-        len: u64,
-    },
+    /// The payload block header was parsed. Data follows in the stream.
+    Payload { len: u64 },
 }
 
 /// Streaming bundle parser.
@@ -61,14 +56,10 @@ pub struct BundleReader<R, S: Retention> {
     dec: StreamDecoder<TeeReader<R, S>>,
     state: State,
     primary: Option<PrimaryBlock<'static>>,
-    extensions: Vec<CanonicalBlock>,
-    payload_flags: BlockFlags,
+    blocks: Vec<CanonicalBlock>,
+    payload_idx: Option<usize>,
     payload_crc_type: u64,
-    payload_crc: Crc,
-    payload_data_offset: u64,
-    payload_len: u64,
     payload_remaining: u64,
-    has_payload: bool,
 }
 
 impl<R: Read, S: Retention> BundleReader<R, S> {
@@ -78,14 +69,10 @@ impl<R: Read, S: Retention> BundleReader<R, S> {
             dec: StreamDecoder::new(tee),
             state: State::Initial,
             primary: None,
-            extensions: Vec::new(),
-            payload_flags: BlockFlags::from_bits(0),
+            blocks: Vec::new(),
+            payload_idx: None,
             payload_crc_type: 0,
-            payload_crc: Crc::None,
-            payload_data_offset: 0,
-            payload_len: 0,
             payload_remaining: 0,
-            has_payload: false,
         }
     }
 
@@ -93,14 +80,16 @@ impl<R: Read, S: Retention> BundleReader<R, S> {
         match self.state {
             State::Initial => {
                 self.dec.read_indefinite_array_start()?;
-                let primary = decode_primary(&mut self.dec)?;
+                let primary = PrimaryBlock::decode(&mut self.dec)?;
                 self.primary = Some(primary);
                 self.state = State::Blocks;
             }
             State::Blocks => {}
             State::PayloadConsumed => {
-                self.payload_crc = if self.payload_crc_type != 0 {
-                    decode_crc_value(&mut self.dec, self.payload_crc_type)?
+                // Read the CRC that follows the payload data
+                let idx = self.payload_idx.unwrap();
+                self.blocks[idx].crc = if self.payload_crc_type != 0 {
+                    Crc::decode(&mut self.dec, self.payload_crc_type)?
                 } else {
                     Crc::None
                 };
@@ -116,34 +105,27 @@ impl<R: Read, S: Retention> BundleReader<R, S> {
             return Ok(None);
         }
 
-        let array_len = self.dec.read_array_len()?;
-        let block_type = self.dec.read_uint()?;
+        let (block, has_data_in_stream) = CanonicalBlock::decode(&mut self.dec)?;
 
-        if block_type == 1 {
-            if self.has_payload {
+        if has_data_in_stream {
+            // Payload block — data follows in the stream
+            if self.payload_idx.is_some() {
                 return Err(Error::InvalidPayloadCount(2));
             }
-            if array_len != 5 && array_len != 6 {
-                return Err(Error::InvalidBlockLength {
-                    expected: "5-6",
-                    actual: array_len,
-                });
-            }
-            let _block_number = self.dec.read_uint()?;
-            self.payload_flags = BlockFlags::from_bits(self.dec.read_uint()?);
-            self.payload_crc_type = self.dec.read_uint()?;
-            self.payload_len = self.dec.read_bstr_header()?;
-            self.payload_data_offset = self.dec.position();
-            self.payload_remaining = self.payload_len;
-            self.has_payload = true;
+            let data_len = match &block.data {
+                BlockData::Retained { len, .. } => *len,
+                _ => unreachable!(),
+            };
+            self.payload_crc_type = block.crc.crc_type();
+            self.payload_remaining = data_len;
+            self.payload_idx = Some(self.blocks.len());
+            self.blocks.push(block);
             self.state = State::PayloadData;
-            Ok(Some(BlockEvent::Payload {
-                len: self.payload_len,
-            }))
+            Ok(Some(BlockEvent::Payload { len: data_len }))
         } else {
-            let block = decode_canonical_body(&mut self.dec, block_type, array_len)?;
-            self.extensions.push(block);
-            Ok(Some(BlockEvent::Extension(self.extensions.len() - 1)))
+            // Extension block — fully parsed
+            self.blocks.push(block);
+            Ok(Some(BlockEvent::Extension(self.blocks.len() - 1)))
         }
     }
 
@@ -151,31 +133,14 @@ impl<R: Read, S: Retention> BundleReader<R, S> {
         self.primary.as_ref()
     }
 
-    pub fn extensions(&self) -> &[CanonicalBlock] {
-        &self.extensions
-    }
-
-    pub fn payload_len(&self) -> u64 {
-        self.payload_len
-    }
-
-    pub fn payload_data_offset(&self) -> u64 {
-        self.payload_data_offset
-    }
-
-    pub fn payload_flags(&self) -> BlockFlags {
-        self.payload_flags
-    }
-
-    pub fn payload_crc(&self) -> Crc {
-        self.payload_crc
+    pub fn blocks(&self) -> &[CanonicalBlock] {
+        &self.blocks
     }
 
     pub fn payload_reader(&mut self) -> PayloadReader<'_, R, S> {
         PayloadReader { reader: self }
     }
 
-    /// Walk `len` bytes forward in the stream.
     pub fn walk(&mut self, len: u64) -> Result<(), Error> {
         self.dec.skip(len)?;
         if self.state == State::PayloadData {
@@ -187,7 +152,6 @@ impl<R: Read, S: Retention> BundleReader<R, S> {
         Ok(())
     }
 
-    /// Parse all remaining blocks and assemble the [`Bundle`].
     pub fn into_bundle(mut self) -> Result<Bundle<S>, Error> {
         while let Some(event) = self.next_block()? {
             if let BlockEvent::Payload { len } = event {
@@ -204,17 +168,7 @@ impl<R: Read, S: Retention> BundleReader<R, S> {
         let (_source, mut retention) = self.dec.into_inner().into_parts();
         retention.flush().map_err(aqueduct_cbor::Error::from)?;
 
-        Ok(Bundle::from_parts(
-            primary,
-            self.extensions,
-            PayloadRef {
-                flags: self.payload_flags,
-                crc: self.payload_crc,
-                data_offset: self.payload_data_offset,
-                data_len: self.payload_len,
-            },
-            retention,
-        ))
+        Ok(Bundle::from_parts(primary, self.blocks, retention))
     }
 }
 

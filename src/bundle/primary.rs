@@ -1,4 +1,6 @@
-use aqueduct_cbor::{Decoder, Encoder, FromCbor, ToCbor};
+use std::io::Read;
+
+use aqueduct_cbor::{Encoder, StreamDecoder, ToCbor};
 
 use crate::bundle::crc::Crc;
 use crate::eid::Eid;
@@ -104,26 +106,8 @@ pub struct PrimaryBlock<'a> {
     pub fragment: Option<FragmentInfo>,
 }
 
-impl PrimaryBlock<'_> {
-    /// Validate constraints from RFC 9171.
-    pub fn validate(&self) -> Result<(), Error> {
-        if self.version != 7 {
-            return Err(Error::UnsupportedVersion(self.version));
-        }
-        self.flags.validate(self.src_node_id.is_null())?;
-
-        if self.flags.is_fragment() != self.fragment.is_some() {
-            return Err(Error::InvalidFlags);
-        }
-
-        Ok(())
-    }
-}
-
-impl<'a> FromCbor<'a> for PrimaryBlock<'a> {
-    type Error = Error;
-
-    fn decode(dec: &mut Decoder<'a>) -> Result<Self, Self::Error> {
+impl PrimaryBlock<'static> {
+    pub(crate) fn decode<R: Read>(dec: &mut StreamDecoder<R>) -> Result<Self, Error> {
         let len = dec.read_array_len()?;
         if !(8..=11).contains(&len) {
             return Err(Error::InvalidBlockLength {
@@ -175,7 +159,7 @@ impl<'a> FromCbor<'a> for PrimaryBlock<'a> {
         };
 
         let crc = if has_crc {
-            Crc::decode_value(dec, crc_type)?
+            Crc::decode(dec, crc_type)?
         } else {
             Crc::None
         };
@@ -191,6 +175,21 @@ impl<'a> FromCbor<'a> for PrimaryBlock<'a> {
             lifetime,
             fragment,
         })
+    }
+}
+
+impl PrimaryBlock<'_> {
+    pub fn validate(&self) -> Result<(), Error> {
+        if self.version != 7 {
+            return Err(Error::UnsupportedVersion(self.version));
+        }
+        self.flags.validate(self.src_node_id.is_null())?;
+
+        if self.flags.is_fragment() != self.fragment.is_some() {
+            return Err(Error::InvalidFlags);
+        }
+
+        Ok(())
     }
 }
 

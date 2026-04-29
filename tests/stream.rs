@@ -142,7 +142,7 @@ fn stream_roundtrip_with_extensions() {
     while let Some(event) = reader.next_block().unwrap() {
         match event {
             BlockEvent::Extension(idx) => {
-                let parsed = reader.extensions()[idx].parse_ext::<HopCount>().unwrap();
+                let parsed = reader.blocks()[idx].parse_ext::<HopCount>().unwrap();
                 assert_eq!(parsed.limit, 30);
                 assert_eq!(parsed.count, 5);
                 ext_count += 1;
@@ -199,7 +199,8 @@ fn stream_walk() {
 fn stream_compatible_with_inmemory() {
     let primary = PrimaryBlock {
         version: 7,
-        flags: aqueduct::BundleFlags::from_bits(0),
+        // Null source requires no_fragment flag per RFC 9171
+        flags: aqueduct::BundleFlags::from_bits(0x000004),
         crc: Crc::None,
         dest_eid: Eid::Null,
         src_node_id: Eid::Null,
@@ -208,6 +209,7 @@ fn stream_compatible_with_inmemory() {
         lifetime: 3_600_000_000,
         fragment: None,
     };
+
     let payload = b"cross-api test";
 
     let mut stream_buf = Vec::new();
@@ -283,11 +285,11 @@ fn stream_forwarding_pattern() {
 
         match event {
             BlockEvent::Extension(idx) => {
-                writer.write_extension(&reader.extensions()[idx]).unwrap();
+                writer.write_extension(&reader.blocks()[idx]).unwrap();
             }
             BlockEvent::Payload { len } => {
                 writer
-                    .begin_payload(reader.payload_flags(), Crc::None, len)
+                    .begin_payload(BlockFlags::from_bits(0), Crc::None, len)
                     .unwrap();
 
                 let mut buf = [0u8; 8192];
@@ -314,7 +316,7 @@ fn stream_forwarding_pattern() {
     while let Some(event) = reader2.next_block().unwrap() {
         match event {
             BlockEvent::Extension(idx) => {
-                let hop = reader2.extensions()[idx].parse_ext::<HopCount>().unwrap();
+                let hop = reader2.blocks()[idx].parse_ext::<HopCount>().unwrap();
                 assert_eq!(hop.count, 1);
                 ext_count += 1;
             }
@@ -640,7 +642,7 @@ fn streaming_crc_matches_inmemory_crc() {
     // Encode via BundleWriter (streaming CRC)
     let primary = aqueduct::PrimaryBlock {
         version: 7,
-        flags: aqueduct::BundleFlags::from_bits(0),
+        flags: aqueduct::BundleFlags::from_bits(0x000004), // no_fragment for null source
         crc: Crc::crc32c(),
         dest_eid: Eid::Null,
         src_node_id: Eid::Null,

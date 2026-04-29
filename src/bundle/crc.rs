@@ -1,4 +1,6 @@
-use aqueduct_cbor::{Decoder, Encoder};
+use std::io::Read;
+
+use aqueduct_cbor::{Encoder, StreamDecoder};
 use crc::{CRC_16_IBM_SDLC, CRC_32_ISCSI, Crc as CrcAlgo};
 
 use crate::error::Error;
@@ -26,6 +28,16 @@ impl Crc {
     /// Create a CRC-32C placeholder (value computed during encode).
     pub fn crc32c() -> Self {
         Crc::Crc32c(0)
+    }
+
+    /// Create a placeholder from a CRC type code (0, 1, or 2).
+    pub fn placeholder(crc_type: u64) -> Result<Self, Error> {
+        match crc_type {
+            0 => Ok(Crc::None),
+            1 => Ok(Crc::Crc16(0)),
+            2 => Ok(Crc::Crc32c(0)),
+            _ => Err(Error::InvalidCrcType(crc_type)),
+        }
     }
 
     #[inline]
@@ -94,9 +106,12 @@ impl Crc {
     }
 
     /// Decode a CRC value byte string from CBOR.
-    pub fn decode_value(dec: &mut Decoder, crc_type: u64) -> Result<Self, Error> {
-        let crc_bstr = dec.read_bstr()?;
-        Self::from_bytes(crc_type, crc_bstr)
+    pub(crate) fn decode<R: Read>(
+        dec: &mut StreamDecoder<R>,
+        crc_type: u64,
+    ) -> Result<Self, Error> {
+        let bytes = dec.read_bstr()?;
+        Self::from_bytes(crc_type, &bytes)
     }
 
     /// Parse a CRC value from raw bytes.

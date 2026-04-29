@@ -1,4 +1,4 @@
-use aqueduct_cbor::{Decoder, Encoder};
+use aqueduct_cbor::{Encoder, StreamDecoder};
 
 use crate::error::Error;
 use crate::extension::Extension;
@@ -21,7 +21,7 @@ impl Extension for HopCount {
     const BLOCK_TYPE: u64 = 10;
 
     fn parse(data: &[u8]) -> Result<Self, Error> {
-        let mut dec = Decoder::new(data);
+        let mut dec = StreamDecoder::new(data);
         let len = dec.read_array_len()?;
         if len != 2 {
             return Err(Error::InvalidBlockLength {

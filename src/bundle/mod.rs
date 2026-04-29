@@ -1,7 +1,6 @@
 pub mod builder;
 pub mod canonical;
 pub mod crc;
-pub(crate) mod payload;
 pub mod primary;
 
 use std::io::Read;
@@ -14,9 +13,8 @@ use aqueduct_cbor::{Encoder, ToCbor};
 #[cfg(feature = "async")]
 use futures_io::AsyncRead;
 
-use canonical::CanonicalBlock;
+use canonical::{BlockData, CanonicalBlock};
 use crc::Crc;
-use payload::PayloadRef;
 use primary::PrimaryBlock;
 
 use crate::eid::Eid;
@@ -27,25 +25,26 @@ use crate::io::retention::AsyncRetention;
 use crate::io::retention::{NoopRetention, Retention};
 
 /// A BPv7 bundle (RFC 9171 §4.1).
+///
+/// A bundle is a primary block followed by canonical blocks (extensions
+/// and exactly one payload block). The payload data lives in the
+/// retention backend.
 #[derive(Debug, Clone)]
 pub struct Bundle<S> {
     primary: PrimaryBlock<'static>,
-    extensions: Vec<CanonicalBlock>,
-    payload: PayloadRef,
+    blocks: Vec<CanonicalBlock>,
     retention: S,
 }
 
 impl<S> Bundle<S> {
     pub(crate) fn from_parts(
         primary: PrimaryBlock<'static>,
-        extensions: Vec<CanonicalBlock>,
-        payload: PayloadRef,
+        blocks: Vec<CanonicalBlock>,
         retention: S,
     ) -> Self {
         Bundle {
             primary,
-            extensions,
-            payload,
+            blocks,
             retention,
         }
     }
@@ -58,24 +57,31 @@ impl<S> Bundle<S> {
         &mut self.primary
     }
 
-    pub fn extensions(&self) -> &[CanonicalBlock] {
-        &self.extensions
+    pub fn blocks(&self) -> &[CanonicalBlock] {
+        &self.blocks
     }
 
-    pub fn extensions_mut(&mut self) -> &mut Vec<CanonicalBlock> {
-        &mut self.extensions
+    pub fn blocks_mut(&mut self) -> &mut Vec<CanonicalBlock> {
+        &mut self.blocks
+    }
+
+    pub fn extensions(&self) -> impl Iterator<Item = &CanonicalBlock> {
+        self.blocks.iter().filter(|b| !b.is_payload())
+    }
+
+    pub fn payload_block(&self) -> Option<&CanonicalBlock> {
+        self.blocks.iter().find(|b| b.is_payload())
     }
 
     pub fn payload_len(&self) -> u64 {
-        self.payload.data_len
+        self.payload_block()
+            .and_then(|b| b.retained_range())
+            .map(|(_, len)| len)
+            .unwrap_or(0)
     }
 
     pub fn payload_crc(&self) -> Crc {
-        self.payload.crc
-    }
-
-    pub(crate) fn payload_ref(&self) -> &PayloadRef {
-        &self.payload
+        self.payload_block().map(|b| b.crc).unwrap_or(Crc::None)
     }
 
     pub fn retention(&self) -> &S {
@@ -83,27 +89,29 @@ impl<S> Bundle<S> {
     }
 
     pub fn block_by_type(&self, block_type: u64) -> Option<&CanonicalBlock> {
-        self.extensions.iter().find(|b| b.block_type == block_type)
+        self.blocks.iter().find(|b| b.block_type == block_type)
     }
 
     pub fn block_by_number(&self, number: u64) -> Option<&CanonicalBlock> {
-        self.extensions.iter().find(|b| b.block_number == number)
+        self.blocks.iter().find(|b| b.block_number == number)
     }
 
     pub fn validate(&self) -> Result<(), Error> {
         self.primary.validate()?;
 
-        const PAYLOAD_BLOCK_NUMBER: u64 = 1;
-
-        for (i, a) in self.extensions.iter().enumerate() {
-            if a.block_number == PAYLOAD_BLOCK_NUMBER {
-                return Err(Error::DuplicateBlockNumber(a.block_number));
+        let mut payload_count = 0;
+        for (i, a) in self.blocks.iter().enumerate() {
+            if a.is_payload() {
+                payload_count += 1;
             }
-            for b in &self.extensions[i + 1..] {
+            for b in &self.blocks[i + 1..] {
                 if a.block_number == b.block_number {
                     return Err(Error::DuplicateBlockNumber(a.block_number));
                 }
             }
+        }
+        if payload_count != 1 {
+            return Err(Error::InvalidPayloadCount(payload_count));
         }
 
         Ok(())
@@ -135,13 +143,7 @@ impl<S: Retention> Bundle<S> {
         BundleReader::new(source, retention).into_bundle()
     }
 
-    /// Parse a bundle from a retention that already contains the wire bytes.
-    ///
-    /// Used after async reception: bytes were written to the retention
     /// Receive a bundle from an async source.
-    ///
-    /// Bytes are read asynchronously until EOF and written to the retention.
-    /// CBOR parsing happens synchronously from the retained bytes.
     #[cfg(feature = "async")]
     pub async fn from_async_stream<R>(mut source: R, mut retention: S) -> Result<Self, Error>
     where
@@ -187,75 +189,86 @@ impl<S: Retention> Bundle<S> {
             .reader(0, len)
             .map_err(aqueduct_cbor::Error::from)?;
         let noop = NoopRetention;
-        let reader = BundleReader::new(source, noop);
-        let (primary, extensions, payload) = {
-            let noop_bundle = reader.into_bundle()?;
-            (
-                noop_bundle.primary().clone(),
-                noop_bundle.extensions().to_vec(),
-                noop_bundle.payload_ref().clone(),
-            )
-        };
-        Ok(Bundle::from_parts(primary, extensions, payload, retention))
+        let noop_bundle = BundleReader::new(source, noop).into_bundle()?;
+        Ok(Bundle::from_parts(
+            noop_bundle.primary().clone(),
+            noop_bundle.blocks().to_vec(),
+            retention,
+        ))
     }
 
     pub fn payload_reader(&self) -> std::io::Result<S::Reader<'_>> {
-        self.retention
-            .reader(self.payload.data_offset, self.payload.data_len)
+        let (offset, len) = self
+            .payload_block()
+            .and_then(|b| b.retained_range())
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no payload block"))?;
+        self.retention.reader(offset, len)
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, Error> {
-        let mut payload_data = Vec::with_capacity(self.payload.data_len as usize);
-        self.payload_reader()
-            .map_err(aqueduct_cbor::Error::from)?
-            .read_to_end(&mut payload_data)
-            .map_err(aqueduct_cbor::Error::from)?;
+        self.validate()?;
 
         let mut enc = Encoder::new();
         enc.write_indefinite_array();
         self.primary.encode(&mut enc);
-        for ext in &self.extensions {
-            ext.encode(&mut enc);
+
+        for block in &self.blocks {
+            match &block.data {
+                BlockData::Inline(_) => block.encode(&mut enc),
+                BlockData::Retained { offset, len } => {
+                    let mut payload_data = Vec::with_capacity(*len as usize);
+                    self.retention
+                        .reader(*offset, *len)
+                        .map_err(aqueduct_cbor::Error::from)?
+                        .read_to_end(&mut payload_data)
+                        .map_err(aqueduct_cbor::Error::from)?;
+
+                    let has_crc = !block.crc.is_none();
+                    let block_start = enc.position();
+                    enc.write_array(if has_crc { 6 } else { 5 });
+                    enc.write_uint(block.block_type);
+                    enc.write_uint(block.block_number);
+                    enc.write_uint(block.flags.bits());
+                    enc.write_uint(block.crc.crc_type());
+                    enc.write_bstr(&payload_data);
+                    block.crc.encode_and_finalize(&mut enc, block_start);
+                }
+            }
         }
 
-        let has_crc = !self.payload.crc.is_none();
-        let block_start = enc.position();
-        enc.write_array(if has_crc { 6 } else { 5 });
-        enc.write_uint(1);
-        enc.write_uint(1);
-        enc.write_uint(self.payload.flags.bits());
-        enc.write_uint(self.payload.crc.crc_type());
-        enc.write_bstr(&payload_data);
-        self.payload.crc.encode_and_finalize(&mut enc, block_start);
         enc.write_break();
         Ok(enc.into_bytes())
     }
 
-    /// Encode the bundle to a writer, streaming payload from retention.
-    ///
-    /// Unlike [`encode`](Self::encode), this does not buffer the full
-    /// payload in memory.
     pub fn encode_to<W: std::io::Write>(&self, writer: W) -> Result<(), Error> {
+        self.validate()?;
         use crate::io::BundleWriter;
 
         let mut w = BundleWriter::new(writer)?;
         w.write_primary(&self.primary)?;
-        for ext in &self.extensions {
-            w.write_extension(ext)?;
-        }
-        w.begin_payload(self.payload.flags, self.payload.crc, self.payload.data_len)?;
 
-        let mut reader = self.payload_reader().map_err(aqueduct_cbor::Error::from)?;
-        let mut buf = [0u8; 65536];
-        loop {
-            let n = reader.read(&mut buf).map_err(aqueduct_cbor::Error::from)?;
-            if n == 0 {
-                break;
+        for block in &self.blocks {
+            match &block.data {
+                BlockData::Inline(_) => w.write_extension(block)?,
+                BlockData::Retained { offset, len } => {
+                    w.begin_payload(block.flags, block.crc, *len)?;
+                    let mut reader = self
+                        .retention
+                        .reader(*offset, *len)
+                        .map_err(aqueduct_cbor::Error::from)?;
+                    let mut buf = [0u8; 65536];
+                    loop {
+                        let n = reader.read(&mut buf).map_err(aqueduct_cbor::Error::from)?;
+                        if n == 0 {
+                            break;
+                        }
+                        w.write_payload_data(&buf[..n])?;
+                    }
+                    w.end_payload()?;
+                }
             }
-            w.write_payload_data(&buf[..n])?;
         }
 
-        w.end_payload()?;
         w.finish()?;
         Ok(())
     }

@@ -1,4 +1,4 @@
-use aqueduct_cbor::{Decoder, Encoder, FromCbor, ToCbor};
+use aqueduct_cbor::{Encoder, StreamDecoder, ToCbor};
 
 use crate::eid::Eid;
 use crate::error::Error;
@@ -14,7 +14,7 @@ impl Extension for PreviousNode<'_> {
     const BLOCK_TYPE: u64 = 6;
 
     fn parse(data: &[u8]) -> Result<Self, Error> {
-        let mut dec = Decoder::new(data);
+        let mut dec = StreamDecoder::new(data);
         let node_id = Eid::decode(&mut dec)?.into_owned();
         Ok(PreviousNode { node_id })
     }
