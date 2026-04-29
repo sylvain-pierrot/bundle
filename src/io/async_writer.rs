@@ -1,8 +1,11 @@
-//! Streaming bundle writer.
+//! Async streaming bundle writer.
 
-use std::io::Write;
+use std::io;
+use std::pin::Pin;
+use std::task::Poll;
 
-use aqueduct_cbor::{Encoder, StreamEncoder, ToCbor};
+use aqueduct_cbor::{Encoder, ToCbor};
+use futures_io::AsyncWrite;
 
 use crate::bundle::canonical::{BlockFlags, CanonicalBlock};
 use crate::bundle::crc::{Crc, CrcHasher};
@@ -16,21 +19,24 @@ enum State {
     Payload,
 }
 
-/// Streaming bundle encoder.
-pub struct BundleWriter<W> {
-    enc: StreamEncoder<W>,
+/// Async streaming bundle encoder.
+///
+/// Same logic as [`BundleWriter`](super::BundleWriter) but writes to
+/// an [`AsyncWrite`] sink. Block headers are encoded synchronously
+/// (CPU-bound, nanoseconds), then async-written to the sink.
+pub struct BundleAsyncWriter<W> {
+    writer: W,
     state: State,
     payload_hasher: Option<CrcHasher>,
     payload_crc: Crc,
     payload_remaining: u64,
 }
 
-impl<W: Write> BundleWriter<W> {
-    pub fn new(writer: W) -> Result<Self, Error> {
-        let mut enc = StreamEncoder::new(writer);
-        enc.write_indefinite_array()?;
+impl<W: AsyncWrite + Unpin> BundleAsyncWriter<W> {
+    pub async fn new(mut writer: W) -> Result<Self, Error> {
+        write_all(&mut writer, &[0x9F]).await?; // indefinite array start
         Ok(Self {
-            enc,
+            writer,
             state: State::Init,
             payload_hasher: None,
             payload_crc: Crc::None,
@@ -38,28 +44,28 @@ impl<W: Write> BundleWriter<W> {
         })
     }
 
-    pub fn write_primary(&mut self, primary: &PrimaryBlock) -> Result<(), Error> {
+    pub async fn write_primary(&mut self, primary: &PrimaryBlock) -> Result<(), Error> {
         if self.state != State::Init {
             return Err(Error::IncompleteRead);
         }
         let mut buf = Encoder::new();
         primary.encode(&mut buf);
-        self.enc.write_raw(buf.as_bytes())?;
+        write_all(&mut self.writer, buf.as_bytes()).await?;
         self.state = State::Blocks;
         Ok(())
     }
 
-    pub fn write_extension(&mut self, block: &CanonicalBlock) -> Result<(), Error> {
+    pub async fn write_extension(&mut self, block: &CanonicalBlock) -> Result<(), Error> {
         if self.state != State::Blocks {
             return Err(Error::IncompleteRead);
         }
         let mut buf = Encoder::new();
         block.encode(&mut buf);
-        self.enc.write_raw(buf.as_bytes())?;
+        write_all(&mut self.writer, buf.as_bytes()).await?;
         Ok(())
     }
 
-    pub fn begin_payload(
+    pub async fn begin_payload(
         &mut self,
         flags: BlockFlags,
         crc: Crc,
@@ -78,7 +84,7 @@ impl<W: Write> BundleWriter<W> {
         header.write_uint(crc.crc_type());
         header.write_bstr_header(data_len);
 
-        self.enc.write_raw(header.as_bytes())?;
+        write_all(&mut self.writer, header.as_bytes()).await?;
 
         self.payload_hasher = CrcHasher::new(&crc);
         if let Some(h) = &mut self.payload_hasher {
@@ -91,7 +97,7 @@ impl<W: Write> BundleWriter<W> {
         Ok(())
     }
 
-    pub fn write_payload_data(&mut self, data: &[u8]) -> Result<(), Error> {
+    pub async fn write_payload_data(&mut self, data: &[u8]) -> Result<(), Error> {
         if self.state != State::Payload {
             return Err(Error::PayloadNotConsumed);
         }
@@ -99,7 +105,7 @@ impl<W: Write> BundleWriter<W> {
         if len > self.payload_remaining {
             return Err(Error::PayloadOverflow);
         }
-        self.enc.write_raw(data)?;
+        write_all(&mut self.writer, data).await?;
         if let Some(h) = &mut self.payload_hasher {
             h.update(data);
         }
@@ -107,7 +113,7 @@ impl<W: Write> BundleWriter<W> {
         Ok(())
     }
 
-    pub fn end_payload(&mut self) -> Result<(), Error> {
+    pub async fn end_payload(&mut self) -> Result<(), Error> {
         if self.state != State::Payload {
             return Err(Error::PayloadNotConsumed);
         }
@@ -118,21 +124,39 @@ impl<W: Write> BundleWriter<W> {
             hasher.update(&zeroed[..1 + crc_size]);
 
             let computed = hasher.finalize();
-            let mut crc_buf = [0u8; 4];
-            let n = computed.write_value(&mut crc_buf);
-            self.enc.write_bstr(&crc_buf[..n])?;
+            let mut crc_buf = [0u8; 5]; // 1 byte header + max 4 bytes value
+            crc_buf[0] = 0x40 | crc_size as u8; // CBOR bstr header
+            let n = computed.write_value(&mut crc_buf[1..]);
+            write_all(&mut self.writer, &crc_buf[..1 + n]).await?;
         }
         self.state = State::Blocks;
         Ok(())
     }
 
-    pub fn finish(self) -> Result<W, Error> {
+    pub async fn finish(mut self) -> Result<W, Error> {
         if self.state == State::Payload {
             return Err(Error::PayloadNotConsumed);
         }
-        let mut enc = self.enc;
-        enc.write_break()?;
-        enc.flush()?;
-        Ok(enc.into_inner())
+        write_all(&mut self.writer, &[0xFF]).await?; // break
+        flush(&mut self.writer).await?;
+        Ok(self.writer)
     }
+}
+
+async fn write_all<W: AsyncWrite + Unpin>(writer: &mut W, mut buf: &[u8]) -> Result<(), Error> {
+    while !buf.is_empty() {
+        let n = std::future::poll_fn(|cx| -> Poll<io::Result<usize>> {
+            Pin::new(&mut *writer).poll_write(cx, buf)
+        })
+        .await
+        .map_err(|e| Error::Cbor(aqueduct_cbor::Error::from(e)))?;
+        buf = &buf[n..];
+    }
+    Ok(())
+}
+
+async fn flush<W: AsyncWrite + Unpin>(writer: &mut W) -> Result<(), Error> {
+    std::future::poll_fn(|cx| -> Poll<io::Result<()>> { Pin::new(&mut *writer).poll_flush(cx) })
+        .await
+        .map_err(|e| Error::Cbor(aqueduct_cbor::Error::from(e)))
 }

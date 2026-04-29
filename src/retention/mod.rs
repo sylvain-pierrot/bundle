@@ -5,6 +5,9 @@ mod memory;
 
 use std::io::{self, Read, Write};
 
+#[cfg(feature = "async")]
+use futures_io::AsyncWrite;
+
 pub use disk::DiskRetention;
 pub use memory::MemoryRetention;
 
@@ -22,16 +25,16 @@ pub trait Retention: Write {
     fn discard(&mut self) -> io::Result<()>;
 }
 
-/// Async storage backend for bundle retention.
+/// Async write capability for retention backends.
+///
+/// Used by [`BundleAsyncReader`](crate::BundleAsyncReader) to receive
+/// bytes from an async source. The retention must also implement
+/// [`Retention`] for sync parsing after reception.
 #[cfg(feature = "async")]
-pub trait AsyncRetention: futures_io::AsyncWrite + Unpin {
-    type Reader<'a>: futures_io::AsyncRead + Unpin
-    where
-        Self: 'a;
+pub trait AsyncRetention: AsyncWrite + Unpin + Retention {}
 
-    fn reader(&self, offset: u64, len: u64) -> io::Result<Self::Reader<'_>>;
-    fn discard(&mut self) -> io::Result<()>;
-}
+#[cfg(feature = "async")]
+impl<T: AsyncWrite + Unpin + Retention> AsyncRetention for T {}
 
 /// No-op retention that discards writes.
 pub(crate) struct NoopRetention;

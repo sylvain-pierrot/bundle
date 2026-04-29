@@ -8,7 +8,7 @@ use futures_io::{AsyncRead, AsyncWrite};
 
 use crate::bundle::Bundle;
 use crate::error::Error;
-use crate::retention::{AsyncRetention, NoopRetention, Retention};
+use crate::retention::{AsyncRetention, NoopRetention};
 
 /// Async bundle reader. Counterpart of [`BundleReader`](super::BundleReader).
 ///
@@ -29,7 +29,7 @@ impl BundleAsyncReader {
     pub async fn read_from<R, S>(&self, mut source: R, mut retention: S) -> Result<Bundle<S>, Error>
     where
         R: AsyncRead + Unpin,
-        S: AsyncRetention + Retention,
+        S: AsyncRetention,
     {
         let mut total = 0u64;
         let mut chunk = [0u8; 65536];
@@ -49,7 +49,9 @@ impl BundleAsyncReader {
         if total == 0 {
             return Err(Error::EmptyRetention);
         }
-        let source = Retention::reader(&retention, 0, total).map_err(aqueduct_cbor::Error::from)?;
+        let source = retention
+            .reader(0, total)
+            .map_err(aqueduct_cbor::Error::from)?;
         let noop_bundle =
             super::reader::OpenBundleReader::open(source, NoopRetention).into_bundle()?;
         Ok(noop_bundle.swap_retention(retention))

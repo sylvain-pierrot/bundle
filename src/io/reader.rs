@@ -5,7 +5,7 @@ use std::io::Read;
 use aqueduct_cbor::StreamDecoder;
 
 use crate::bundle::Bundle;
-use crate::bundle::canonical::{BlockData, CanonicalBlock};
+use crate::bundle::canonical::CanonicalBlock;
 use crate::bundle::crc::Crc;
 use crate::bundle::primary::PrimaryBlock;
 use crate::error::Error;
