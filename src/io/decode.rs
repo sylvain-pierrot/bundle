@@ -1,7 +1,4 @@
 //! Streaming CBOR decode helpers for BPv7 types.
-//!
-//! These mirror the `FromCbor` impls but operate over [`StreamDecoder`]
-//! and return owned (`'static`) data.
 
 use std::borrow::Cow;
 use std::io::Read;
@@ -17,13 +14,13 @@ use crate::error::Error;
 pub(crate) fn decode_eid<R: Read>(dec: &mut StreamDecoder<R>) -> Result<Eid<'static>, Error> {
     let len = dec.read_array_len()?;
     if len != 2 {
-        return Err(Error::InvalidCbor);
+        return Err(Error::InvalidEid);
     }
     let scheme = dec.read_uint()?;
     match scheme {
         1 => match dec.read_uint_or_tstr()? {
             UintOrString::Uint(0) => Ok(Eid::Null),
-            UintOrString::Uint(_) => Err(Error::InvalidCbor),
+            UintOrString::Uint(_) => Err(Error::InvalidEid),
             UintOrString::Tstr(s) => Ok(Eid::Dtn(Cow::Owned(s))),
         },
         2 => {
@@ -47,8 +44,8 @@ pub(crate) fn decode_eid<R: Read>(dec: &mut StreamDecoder<R>) -> Result<Eid<'sta
                 3 => {
                     let raw_alloc = dec.read_uint()?;
                     let raw_node = dec.read_uint()?;
-                    let allocator_id = u32::try_from(raw_alloc).map_err(|_| Error::InvalidCbor)?;
-                    let node_number = u32::try_from(raw_node).map_err(|_| Error::InvalidCbor)?;
+                    let allocator_id = u32::try_from(raw_alloc).map_err(|_| Error::EidOverflow)?;
+                    let node_number = u32::try_from(raw_node).map_err(|_| Error::EidOverflow)?;
                     let service_number = dec.read_uint()?;
                     if allocator_id == 0 && node_number == 0 && service_number == 0 {
                         Ok(Eid::Null)
@@ -60,7 +57,7 @@ pub(crate) fn decode_eid<R: Read>(dec: &mut StreamDecoder<R>) -> Result<Eid<'sta
                         })
                     }
                 }
-                _ => Err(Error::InvalidCbor),
+                _ => Err(Error::InvalidEid),
             }
         }
         _ => Err(Error::InvalidEidScheme(scheme)),
@@ -72,7 +69,10 @@ pub(crate) fn decode_primary<R: Read>(
 ) -> Result<PrimaryBlock<'static>, Error> {
     let len = dec.read_array_len()?;
     if !(8..=11).contains(&len) {
-        return Err(Error::InvalidCbor);
+        return Err(Error::InvalidBlockLength {
+            expected: "8-11",
+            actual: len,
+        });
     }
 
     let version = dec.read_uint()? as u8;
@@ -84,7 +84,10 @@ pub(crate) fn decode_primary<R: Read>(
 
     let ts_len = dec.read_array_len()?;
     if ts_len != 2 {
-        return Err(Error::InvalidCbor);
+        return Err(Error::InvalidBlockLength {
+            expected: "2",
+            actual: ts_len,
+        });
     }
     let creation_ts = CreationTimestamp {
         time: dec.read_uint()?,
@@ -97,7 +100,12 @@ pub(crate) fn decode_primary<R: Read>(
     let has_fragment = match (len, has_crc) {
         (8, false) | (9, true) => false,
         (10, false) | (11, true) => true,
-        _ => return Err(Error::InvalidCbor),
+        _ => {
+            return Err(Error::InvalidBlockLength {
+                expected: "8-11",
+                actual: len,
+            });
+        }
     };
 
     let fragment = if has_fragment {
@@ -134,7 +142,10 @@ pub(crate) fn decode_canonical_body<R: Read>(
     array_len: usize,
 ) -> Result<CanonicalBlock, Error> {
     if array_len != 5 && array_len != 6 {
-        return Err(Error::InvalidCbor);
+        return Err(Error::InvalidBlockLength {
+            expected: "5-6",
+            actual: array_len,
+        });
     }
     let block_number = dec.read_uint()?;
     let flags = BlockFlags::from_bits(dec.read_uint()?);

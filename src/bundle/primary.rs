@@ -126,7 +126,10 @@ impl<'a> FromCbor<'a> for PrimaryBlock<'a> {
     fn decode(dec: &mut Decoder<'a>) -> Result<Self, Self::Error> {
         let len = dec.read_array_len()?;
         if !(8..=11).contains(&len) {
-            return Err(Error::InvalidCbor);
+            return Err(Error::InvalidBlockLength {
+                expected: "8-11",
+                actual: len,
+            });
         }
 
         let version = dec.read_uint()? as u8;
@@ -138,7 +141,10 @@ impl<'a> FromCbor<'a> for PrimaryBlock<'a> {
 
         let ts_len = dec.read_array_len()?;
         if ts_len != 2 {
-            return Err(Error::InvalidCbor);
+            return Err(Error::InvalidBlockLength {
+                expected: "2",
+                actual: ts_len,
+            });
         }
         let creation_ts = CreationTimestamp {
             time: dec.read_uint()?,
@@ -151,7 +157,12 @@ impl<'a> FromCbor<'a> for PrimaryBlock<'a> {
         let has_fragment = match (len, has_crc) {
             (8, false) | (9, true) => false,
             (10, false) | (11, true) => true,
-            _ => return Err(Error::InvalidCbor),
+            _ => {
+                return Err(Error::InvalidBlockLength {
+                    expected: "8-11",
+                    actual: len,
+                });
+            }
         };
 
         let fragment = if has_fragment {

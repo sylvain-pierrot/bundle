@@ -19,7 +19,6 @@ pub struct BundleWriter<W> {
     payload_hasher: Option<CrcHasher>,
     payload_crc: Crc,
     payload_remaining: u64,
-    in_payload: bool,
 }
 
 impl<W: Write> BundleWriter<W> {
@@ -32,7 +31,6 @@ impl<W: Write> BundleWriter<W> {
             payload_hasher: None,
             payload_crc: Crc::None,
             payload_remaining: 0,
-            in_payload: false,
         })
     }
 
@@ -83,7 +81,7 @@ impl<W: Write> BundleWriter<W> {
 
         self.payload_crc = crc;
         self.payload_remaining = data_len;
-        self.in_payload = true;
+
         Ok(())
     }
 
@@ -91,7 +89,7 @@ impl<W: Write> BundleWriter<W> {
     pub fn write_payload_data(&mut self, data: &[u8]) -> Result<(), Error> {
         let len = data.len() as u64;
         if len > self.payload_remaining {
-            return Err(Error::InvalidCbor);
+            return Err(Error::PayloadOverflow);
         }
         self.enc.write_raw(data)?;
         if let Some(h) = &mut self.payload_hasher {
@@ -114,7 +112,7 @@ impl<W: Write> BundleWriter<W> {
             let n = computed.write_value(&mut crc_buf);
             self.enc.write_bstr(&crc_buf[..n])?;
         }
-        self.in_payload = false;
+
         Ok(())
     }
 

@@ -9,14 +9,41 @@ pub use disk::DiskRetention;
 pub use memory::MemoryRetention;
 
 /// Storage backend where bundle bytes are retained.
-///
-/// The retention itself is the writer — bytes are written directly
-/// via the [`Write`] impl. Later, byte ranges can be read back via
-/// [`reader`](Self::reader).
 pub trait Retention: Write {
     type Reader<'a>: Read
     where
         Self: 'a;
 
     fn reader(&self, offset: u64, len: u64) -> Self::Reader<'_>;
+}
+
+/// Async storage backend for bundle retention.
+#[cfg(feature = "async")]
+pub trait AsyncRetention: futures_io::AsyncWrite + Unpin {
+    type Reader<'a>: futures_io::AsyncRead + Unpin
+    where
+        Self: 'a;
+
+    fn reader(&self, offset: u64, len: u64) -> Self::Reader<'_>;
+}
+
+/// No-op retention that discards writes.
+pub(crate) struct NoopRetention;
+
+impl Write for NoopRetention {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Retention for NoopRetention {
+    type Reader<'a> = &'a [u8];
+
+    fn reader(&self, _offset: u64, _len: u64) -> Self::Reader<'_> {
+        &[]
+    }
 }

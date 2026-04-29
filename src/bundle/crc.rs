@@ -74,14 +74,14 @@ impl Crc {
             Crc::Crc16(expected) => {
                 let mut buf = block_bytes.to_vec();
                 buf.get_mut(crc_data_offset..crc_data_offset + 2)
-                    .ok_or(Error::InvalidCbor)?
+                    .ok_or(Error::CrcOutOfBounds)?
                     .fill(0);
                 Self::compute_crc16(&buf) == *expected
             }
             Crc::Crc32c(expected) => {
                 let mut buf = block_bytes.to_vec();
                 buf.get_mut(crc_data_offset..crc_data_offset + 4)
-                    .ok_or(Error::InvalidCbor)?
+                    .ok_or(Error::CrcOutOfBounds)?
                     .fill(0);
                 Self::compute_crc32c(&buf) == *expected
             }
@@ -104,13 +104,19 @@ impl Crc {
         match crc_type {
             1 => {
                 if bytes.len() != 2 {
-                    return Err(Error::InvalidCbor);
+                    return Err(Error::InvalidCrcLength {
+                        expected: 2,
+                        actual: bytes.len(),
+                    });
                 }
                 Ok(Crc::Crc16(u16::from_be_bytes([bytes[0], bytes[1]])))
             }
             2 => {
                 if bytes.len() != 4 {
-                    return Err(Error::InvalidCbor);
+                    return Err(Error::InvalidCrcLength {
+                        expected: 4,
+                        actual: bytes.len(),
+                    });
                 }
                 Ok(Crc::Crc32c(u32::from_be_bytes([
                     bytes[0], bytes[1], bytes[2], bytes[3],

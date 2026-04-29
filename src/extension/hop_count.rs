@@ -24,7 +24,10 @@ impl Extension for HopCount {
         let mut dec = Decoder::new(data);
         let len = dec.read_array_len()?;
         if len != 2 {
-            return Err(Error::InvalidCbor);
+            return Err(Error::InvalidBlockLength {
+                expected: "2",
+                actual: len,
+            });
         }
         let limit = dec.read_uint()? as u8;
         let count = dec.read_uint()? as u8;

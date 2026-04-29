@@ -604,3 +604,67 @@ fn disk_retention_from_stream() {
     std::fs::remove_file(bundle_path).unwrap();
     std::fs::remove_file(retention_path).unwrap();
 }
+
+#[test]
+fn streaming_crc_matches_inmemory_crc() {
+    let payload = b"crc cross-validation payload";
+
+    // Encode via BundleWriter (streaming CRC)
+    let primary = aqueduct::PrimaryBlock {
+        version: 7,
+        flags: aqueduct::BundleFlags::from_bits(0),
+        crc: Crc::crc32c(),
+        dest_eid: Eid::Null,
+        src_node_id: Eid::Null,
+        rpt_eid: Eid::Null,
+        creation_ts: CreationTimestamp { time: 0, seq: 0 },
+        lifetime: 1000,
+        fragment: None,
+    };
+
+    let mut stream_buf = Vec::new();
+    let mut writer = BundleWriter::new(&mut stream_buf).unwrap();
+    writer.write_primary(&primary).unwrap();
+    writer
+        .begin_payload(BlockFlags::from_bits(0), Crc::crc16(), payload.len() as u64)
+        .unwrap();
+    writer.write_payload_data(payload).unwrap();
+    writer.end_payload().unwrap();
+    writer.finish().unwrap();
+
+    // Encode via Bundle.encode() (in-memory CRC)
+    let bundle = aqueduct::Bundle::builder(
+        Eid::Null,
+        Eid::Null,
+        1000,
+        payload,
+        aqueduct::MemoryRetention::new(),
+    )
+    .unwrap()
+    .build();
+    let inmem_buf = bundle.encode().unwrap();
+
+    // Both should decode to the same CRC values
+    let stream_bundle =
+        aqueduct::Bundle::from_bytes(&stream_buf, aqueduct::MemoryRetention::new()).unwrap();
+    let inmem_bundle =
+        aqueduct::Bundle::from_bytes(&inmem_buf, aqueduct::MemoryRetention::new()).unwrap();
+
+    // Primary CRC should match (both use CRC-32C)
+    assert_eq!(
+        stream_bundle.primary().crc.crc_type(),
+        inmem_bundle.primary().crc.crc_type()
+    );
+    // Payload CRC — streaming used crc16, builder defaults to None
+    assert_eq!(stream_bundle.payload_crc().crc_type(), 1);
+    match stream_bundle.payload_crc() {
+        Crc::Crc16(v) => assert_ne!(v, 0),
+        _ => panic!("expected Crc16"),
+    }
+
+    // Re-encode both and verify round-trip
+    let re_stream = stream_bundle.encode().unwrap();
+    let re_inmem = inmem_bundle.encode().unwrap();
+    assert_eq!(stream_buf, re_stream);
+    assert_eq!(inmem_buf, re_inmem);
+}

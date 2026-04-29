@@ -34,7 +34,15 @@ impl Retention for MemoryRetention {
 
     fn reader(&self, offset: u64, len: u64) -> Self::Reader<'_> {
         let start = offset as usize;
-        let end = start + len as usize;
+        let end = start
+            .checked_add(len as usize)
+            .expect("retention offset + len overflows usize");
+        assert!(
+            end <= self.data.len(),
+            "retention read out of bounds: offset={start}, len={}, stored={}",
+            len,
+            self.data.len()
+        );
         &self.data[start..end]
     }
 }

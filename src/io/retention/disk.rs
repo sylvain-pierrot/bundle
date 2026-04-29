@@ -67,9 +67,15 @@ impl Retention for DiskRetention {
     type Reader<'a> = DiskReader;
 
     fn reader(&self, offset: u64, len: u64) -> Self::Reader<'_> {
-        let mut file = File::open(&self.path).expect("failed to open retention file");
-        file.seek(SeekFrom::Start(offset))
-            .expect("failed to seek retention file");
+        let mut file = File::open(&self.path).unwrap_or_else(|e| {
+            panic!("failed to open retention file {}: {e}", self.path.display())
+        });
+        file.seek(SeekFrom::Start(offset)).unwrap_or_else(|e| {
+            panic!(
+                "failed to seek retention file {} to offset {offset}: {e}",
+                self.path.display()
+            )
+        });
         DiskReader {
             file: std::io::BufReader::with_capacity(READ_BUF_SIZE, file),
             remaining: len,

@@ -58,7 +58,10 @@ impl CanonicalBlock {
         array_len: usize,
     ) -> Result<Self, Error> {
         if array_len != 5 && array_len != 6 {
-            return Err(Error::InvalidCbor);
+            return Err(Error::InvalidBlockLength {
+                expected: "5-6",
+                actual: array_len,
+            });
         }
         let block_number = dec.read_uint()?;
         let flags = BlockFlags::from_bits(dec.read_uint()?);

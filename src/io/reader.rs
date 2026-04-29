@@ -102,7 +102,7 @@ impl<R: Read, S: Retention> BundleReader<R, S> {
                 };
                 self.state = State::Blocks;
             }
-            State::PayloadData => return Err(Error::InvalidCbor),
+            State::PayloadData => return Err(Error::PayloadNotConsumed),
             State::Done => return Ok(None),
         }
 
@@ -120,7 +120,10 @@ impl<R: Read, S: Retention> BundleReader<R, S> {
                 return Err(Error::InvalidPayloadCount(2));
             }
             if array_len != 5 && array_len != 6 {
-                return Err(Error::InvalidCbor);
+                return Err(Error::InvalidBlockLength {
+                    expected: "5-6",
+                    actual: array_len,
+                });
             }
             let _block_number = self.dec.read_uint()?;
             self.payload_flags = BlockFlags::from_bits(self.dec.read_uint()?);
@@ -189,7 +192,7 @@ impl<R: Read, S: Retention> BundleReader<R, S> {
         }
 
         if self.state != State::Done {
-            return Err(Error::InvalidCbor);
+            return Err(Error::IncompleteRead);
         }
 
         let primary = self.primary.ok_or(Error::InvalidPayloadCount(0))?;

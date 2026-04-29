@@ -12,4 +12,6 @@ pub use bundle::primary::{BundleFlags, CreationTimestamp, FragmentInfo, PrimaryB
 pub use eid::Eid;
 pub use error::Error;
 pub use extension::{BundleAge, Extension, HopCount, PreviousNode};
+#[cfg(feature = "async")]
+pub use io::AsyncRetention;
 pub use io::{BlockEvent, BundleReader, BundleWriter, DiskRetention, MemoryRetention, Retention};

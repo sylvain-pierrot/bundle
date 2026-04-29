@@ -5,17 +5,26 @@ pub(crate) mod payload;
 pub mod primary;
 
 use std::io::Read;
+#[cfg(feature = "async")]
+use std::pin::Pin;
+#[cfg(feature = "async")]
+use std::task::Poll;
 
 use aqueduct_cbor::{Encoder, ToCbor};
+#[cfg(feature = "async")]
+use futures_io::AsyncRead;
 
 use canonical::CanonicalBlock;
 use crc::Crc;
 use payload::PayloadRef;
 use primary::PrimaryBlock;
 
+use crate::eid::Eid;
 use crate::error::Error;
-use crate::io::retention::Retention;
-use crate::{BundleReader, Eid};
+use crate::io::BundleReader;
+#[cfg(feature = "async")]
+use crate::io::retention::AsyncRetention;
+use crate::io::retention::{NoopRetention, Retention};
 
 /// A BPv7 bundle (RFC 9171 §4.1).
 #[derive(Debug, Clone)]
@@ -25,8 +34,6 @@ pub struct Bundle<S> {
     payload: PayloadRef,
     retention: S,
 }
-
-// -- Accessors (no trait bound on S) -----------------------------------------
 
 impl<S> Bundle<S> {
     pub(crate) fn from_parts(
@@ -67,6 +74,10 @@ impl<S> Bundle<S> {
         self.payload.crc
     }
 
+    pub(crate) fn payload_ref(&self) -> &PayloadRef {
+        &self.payload
+    }
+
     pub fn retention(&self) -> &S {
         &self.retention
     }
@@ -99,8 +110,6 @@ impl<S> Bundle<S> {
     }
 }
 
-// -- Retention-dependent methods ---------------------------------------------
-
 impl<S: Retention> Bundle<S> {
     pub fn builder(
         dest_eid: Eid<'_>,
@@ -124,6 +133,69 @@ impl<S: Retention> Bundle<S> {
 
     pub fn from_stream<R: Read>(source: R, retention: S) -> Result<Self, Error> {
         BundleReader::new(source, retention).into_bundle()
+    }
+
+    /// Parse a bundle from a retention that already contains the wire bytes.
+    ///
+    /// Used after async reception: bytes were written to the retention
+    /// Receive a bundle from an async source.
+    ///
+    /// Bytes are read asynchronously until EOF and written to the retention.
+    /// CBOR parsing happens synchronously from the retained bytes.
+    #[cfg(feature = "async")]
+    pub async fn from_async_stream<R>(mut source: R, mut retention: S) -> Result<Self, Error>
+    where
+        R: AsyncRead + Unpin,
+        S: AsyncRetention,
+    {
+        let mut total = 0u64;
+        let mut buf = [0u8; 65536];
+        loop {
+            let n: usize = std::future::poll_fn(|cx| -> Poll<std::io::Result<usize>> {
+                Pin::new(&mut source).poll_read(cx, &mut buf)
+            })
+            .await
+            .map_err(|e| Error::Cbor(aqueduct_cbor::Error::from(e)))?;
+            if n == 0 {
+                break;
+            }
+            let mut remaining = &buf[..n];
+            while !remaining.is_empty() {
+                let w: usize = std::future::poll_fn(|cx| -> Poll<std::io::Result<usize>> {
+                    Pin::new(&mut retention).poll_write(cx, remaining)
+                })
+                .await
+                .map_err(|e| Error::Cbor(aqueduct_cbor::Error::from(e)))?;
+                remaining = &remaining[w..];
+            }
+            total += n as u64;
+        }
+        std::future::poll_fn(|cx| -> Poll<std::io::Result<()>> {
+            Pin::new(&mut retention).poll_flush(cx)
+        })
+        .await
+        .map_err(|e| Error::Cbor(aqueduct_cbor::Error::from(e)))?;
+
+        Self::from_retention(retention, total)
+    }
+
+    pub fn from_retention(retention: S, len: u64) -> Result<Self, Error> {
+        if len == 0 {
+            return Err(Error::EmptyRetention);
+        }
+        let source = retention.reader(0, len);
+        // Use a no-op sink — bytes are already in retention, no teeing needed.
+        let noop = NoopRetention;
+        let reader = BundleReader::new(source, noop);
+        let (primary, extensions, payload) = {
+            let noop_bundle = reader.into_bundle()?;
+            (
+                noop_bundle.primary().clone(),
+                noop_bundle.extensions().to_vec(),
+                noop_bundle.payload_ref().clone(),
+            )
+        };
+        Ok(Bundle::from_parts(primary, extensions, payload, retention))
     }
 
     pub fn payload_reader(&self) -> S::Reader<'_> {

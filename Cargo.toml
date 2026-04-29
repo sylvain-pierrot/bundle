@@ -6,7 +6,16 @@ name = "aqueduct"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+async = ["futures-io"]
+
 [dependencies]
 aqueduct-cbor = { path = "cbor" }
 crc = "3"
+futures-io = { version = "0.3", optional = true }
 thiserror = "2.0.18"
+
+[dev-dependencies]
+futures = "0.3"
+tokio = { version = "1", features = ["rt", "macros"] }

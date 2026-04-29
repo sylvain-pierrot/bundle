@@ -61,7 +61,7 @@ impl<'a> FromCbor<'a> for Eid<'a> {
     fn decode(dec: &mut Decoder<'a>) -> Result<Self, Self::Error> {
         let len = dec.read_array_len()?;
         if len != 2 {
-            return Err(Error::InvalidCbor);
+            return Err(Error::InvalidEid);
         }
         let scheme = dec.read_uint()?;
         match scheme {
@@ -69,7 +69,7 @@ impl<'a> FromCbor<'a> for Eid<'a> {
                 // dtn scheme: SSP is 0 for dtn:none, or a text string
                 match dec.read_uint_or_tstr()? {
                     UintOrTstr::Uint(0) => Ok(Eid::Null),
-                    UintOrTstr::Uint(_) => Err(Error::InvalidCbor),
+                    UintOrTstr::Uint(_) => Err(Error::InvalidEid),
                     UintOrTstr::Tstr(s) => Ok(Eid::Dtn(Cow::Borrowed(s))),
                 }
             }
@@ -99,9 +99,9 @@ impl<'a> FromCbor<'a> for Eid<'a> {
                         let raw_alloc = dec.read_uint()?;
                         let raw_node = dec.read_uint()?;
                         let allocator_id =
-                            u32::try_from(raw_alloc).map_err(|_| Error::InvalidCbor)?;
+                            u32::try_from(raw_alloc).map_err(|_| Error::EidOverflow)?;
                         let node_number =
-                            u32::try_from(raw_node).map_err(|_| Error::InvalidCbor)?;
+                            u32::try_from(raw_node).map_err(|_| Error::EidOverflow)?;
                         let service_number = dec.read_uint()?;
                         if allocator_id == 0 && node_number == 0 && service_number == 0 {
                             Ok(Eid::Null)
@@ -113,7 +113,7 @@ impl<'a> FromCbor<'a> for Eid<'a> {
                             })
                         }
                     }
-                    _ => Err(Error::InvalidCbor),
+                    _ => Err(Error::InvalidEid),
                 }
             }
             _ => Err(Error::InvalidEidScheme(scheme)),
