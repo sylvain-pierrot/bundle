@@ -141,8 +141,8 @@ fn stream_roundtrip_with_extensions() {
     let mut ext_count = 0;
     while let Some(event) = reader.next_block().unwrap() {
         match event {
-            BlockEvent::Extension(block) => {
-                let parsed = block.parse_ext::<HopCount>().unwrap();
+            BlockEvent::Extension(idx) => {
+                let parsed = reader.extensions()[idx].parse_ext::<HopCount>().unwrap();
                 assert_eq!(parsed.limit, 30);
                 assert_eq!(parsed.count, 5);
                 ext_count += 1;
@@ -282,8 +282,8 @@ fn stream_forwarding_pattern() {
         }
 
         match event {
-            BlockEvent::Extension(block) => {
-                writer.write_extension(&block).unwrap();
+            BlockEvent::Extension(idx) => {
+                writer.write_extension(&reader.extensions()[idx]).unwrap();
             }
             BlockEvent::Payload { len } => {
                 writer
@@ -313,8 +313,8 @@ fn stream_forwarding_pattern() {
     let mut fwd_payload = Vec::new();
     while let Some(event) = reader2.next_block().unwrap() {
         match event {
-            BlockEvent::Extension(block) => {
-                let hop = block.parse_ext::<HopCount>().unwrap();
+            BlockEvent::Extension(idx) => {
+                let hop = reader2.extensions()[idx].parse_ext::<HopCount>().unwrap();
                 assert_eq!(hop.count, 1);
                 ext_count += 1;
             }
@@ -349,7 +349,11 @@ fn retention_from_bytes_roundtrip() {
 
     // Read payload back from retention
     let mut buf = Vec::new();
-    decoded.payload_reader().read_to_end(&mut buf).unwrap();
+    decoded
+        .payload_reader()
+        .unwrap()
+        .read_to_end(&mut buf)
+        .unwrap();
     assert_eq!(buf, payload);
 
     // Re-encode from retention
@@ -391,7 +395,11 @@ fn retention_from_stream_roundtrip() {
     );
 
     let mut buf = Vec::new();
-    decoded.payload_reader().read_to_end(&mut buf).unwrap();
+    decoded
+        .payload_reader()
+        .unwrap()
+        .read_to_end(&mut buf)
+        .unwrap();
     assert_eq!(buf, payload);
 }
 
@@ -410,7 +418,11 @@ fn retention_builder_payload_reader() {
 
     // payload_reader works immediately after build (no encode/decode cycle)
     let mut buf = Vec::new();
-    bundle.payload_reader().read_to_end(&mut buf).unwrap();
+    bundle
+        .payload_reader()
+        .unwrap()
+        .read_to_end(&mut buf)
+        .unwrap();
     assert_eq!(buf, payload);
 }
 
@@ -494,7 +506,11 @@ fn memory_retention_roundtrip() {
     let decoded = aqueduct::Bundle::from_bytes(&encoded, aqueduct::MemoryRetention::new()).unwrap();
 
     let mut buf = Vec::new();
-    decoded.payload_reader().read_to_end(&mut buf).unwrap();
+    decoded
+        .payload_reader()
+        .unwrap()
+        .read_to_end(&mut buf)
+        .unwrap();
     assert_eq!(buf, payload);
 
     let reencoded = decoded.encode().unwrap();
@@ -536,7 +552,11 @@ fn disk_retention_roundtrip() {
     );
 
     let mut buf = Vec::new();
-    decoded.payload_reader().read_to_end(&mut buf).unwrap();
+    decoded
+        .payload_reader()
+        .unwrap()
+        .read_to_end(&mut buf)
+        .unwrap();
     assert_eq!(buf, payload);
 
     let reencoded = decoded.encode().unwrap();
@@ -566,7 +586,11 @@ fn disk_retention_large_payload() {
     let decoded = aqueduct::Bundle::from_bytes(&encoded, disk).unwrap();
 
     let mut buf = Vec::new();
-    decoded.payload_reader().read_to_end(&mut buf).unwrap();
+    decoded
+        .payload_reader()
+        .unwrap()
+        .read_to_end(&mut buf)
+        .unwrap();
     assert_eq!(buf.len(), payload.len());
     assert!(buf.iter().all(|&b| b == 0xCD));
 
@@ -598,7 +622,11 @@ fn disk_retention_from_stream() {
     let decoded = aqueduct::Bundle::from_stream(file, disk).unwrap();
 
     let mut buf = Vec::new();
-    decoded.payload_reader().read_to_end(&mut buf).unwrap();
+    decoded
+        .payload_reader()
+        .unwrap()
+        .read_to_end(&mut buf)
+        .unwrap();
     assert_eq!(buf, payload);
 
     std::fs::remove_file(bundle_path).unwrap();

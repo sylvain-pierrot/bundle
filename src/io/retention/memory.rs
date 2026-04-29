@@ -32,17 +32,20 @@ impl Write for MemoryRetention {
 impl Retention for MemoryRetention {
     type Reader<'a> = &'a [u8];
 
-    fn reader(&self, offset: u64, len: u64) -> Self::Reader<'_> {
+    fn reader(&self, offset: u64, len: u64) -> std::io::Result<Self::Reader<'_>> {
         let start = offset as usize;
-        let end = start
-            .checked_add(len as usize)
-            .expect("retention offset + len overflows usize");
-        assert!(
-            end <= self.data.len(),
-            "retention read out of bounds: offset={start}, len={}, stored={}",
-            len,
-            self.data.len()
-        );
-        &self.data[start..end]
+        let end = start.checked_add(len as usize).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "offset + len overflow")
+        })?;
+        if end > self.data.len() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                format!(
+                    "retention read out of bounds: offset={start}, len={len}, stored={}",
+                    self.data.len()
+                ),
+            ));
+        }
+        Ok(&self.data[start..end])
     }
 }

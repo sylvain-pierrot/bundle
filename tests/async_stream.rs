@@ -34,6 +34,6 @@ async fn async_from_stream_roundtrip() {
     assert_eq!(decoded.payload_len(), payload.len() as u64);
 
     let mut buf = Vec::new();
-    std::io::Read::read_to_end(&mut decoded.payload_reader(), &mut buf).unwrap();
+    std::io::Read::read_to_end(&mut decoded.payload_reader().unwrap(), &mut buf).unwrap();
     assert_eq!(buf, payload);
 }

@@ -5,12 +5,14 @@ use std::path::{Path, PathBuf};
 use super::Retention;
 
 const WRITE_BUF_SIZE: usize = 256 * 1024;
+const READ_BUF_SIZE: usize = 256 * 1024;
 
-/// Disk-backed retention. Writes are buffered for throughput.
-/// Reads open a new file handle and seek.
+/// Disk-backed retention. Writes are buffered. Reads use `try_clone`
+/// to avoid re-opening the file.
 pub struct DiskRetention {
     path: PathBuf,
-    file: BufWriter<File>,
+    writer: BufWriter<File>,
+    reader_handle: File,
 }
 
 impl DiskRetention {
@@ -18,12 +20,15 @@ impl DiskRetention {
         let path = path.as_ref().to_path_buf();
         let file = OpenOptions::new()
             .create(true)
+            .read(true)
             .write(true)
             .truncate(true)
             .open(&path)?;
+        let reader_handle = file.try_clone()?;
         Ok(Self {
             path,
-            file: BufWriter::with_capacity(WRITE_BUF_SIZE, file),
+            writer: BufWriter::with_capacity(WRITE_BUF_SIZE, file),
+            reader_handle,
         })
     }
 
@@ -34,16 +39,14 @@ impl DiskRetention {
 
 impl Write for DiskRetention {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.file.write(buf)
+        self.writer.write(buf)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        self.file.flush()?;
-        self.file.get_ref().sync_data()
+        self.writer.flush()?;
+        self.writer.get_ref().sync_data()
     }
 }
-
-const READ_BUF_SIZE: usize = 256 * 1024;
 
 /// Buffered reader for a byte range from a [`DiskRetention`] file.
 pub struct DiskReader {
@@ -66,19 +69,12 @@ impl Read for DiskReader {
 impl Retention for DiskRetention {
     type Reader<'a> = DiskReader;
 
-    fn reader(&self, offset: u64, len: u64) -> Self::Reader<'_> {
-        let mut file = File::open(&self.path).unwrap_or_else(|e| {
-            panic!("failed to open retention file {}: {e}", self.path.display())
-        });
-        file.seek(SeekFrom::Start(offset)).unwrap_or_else(|e| {
-            panic!(
-                "failed to seek retention file {} to offset {offset}: {e}",
-                self.path.display()
-            )
-        });
-        DiskReader {
-            file: std::io::BufReader::with_capacity(READ_BUF_SIZE, file),
+    fn reader(&self, offset: u64, len: u64) -> std::io::Result<Self::Reader<'_>> {
+        let mut file = self.reader_handle.try_clone()?;
+        file.seek(SeekFrom::Start(offset))?;
+        Ok(DiskReader {
+            file: BufReader::with_capacity(READ_BUF_SIZE, file),
             remaining: len,
-        }
+        })
     }
 }

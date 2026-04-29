@@ -26,8 +26,12 @@ enum State {
 
 /// What [`BundleReader::next_block`] yielded.
 pub enum BlockEvent {
-    Extension(CanonicalBlock),
-    Payload { len: u64 },
+    /// An extension block was parsed. The index refers to
+    /// [`BundleReader::extensions`].
+    Extension(usize),
+    Payload {
+        len: u64,
+    },
 }
 
 /// Streaming bundle parser.
@@ -138,8 +142,8 @@ impl<R: Read, S: Retention> BundleReader<R, S> {
             }))
         } else {
             let block = decode_canonical_body(&mut self.dec, block_type, array_len)?;
-            self.extensions.push(block.clone());
-            Ok(Some(BlockEvent::Extension(block)))
+            self.extensions.push(block);
+            Ok(Some(BlockEvent::Extension(self.extensions.len() - 1)))
         }
     }
 

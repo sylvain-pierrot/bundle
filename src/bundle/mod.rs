@@ -183,8 +183,9 @@ impl<S: Retention> Bundle<S> {
         if len == 0 {
             return Err(Error::EmptyRetention);
         }
-        let source = retention.reader(0, len);
-        // Use a no-op sink — bytes are already in retention, no teeing needed.
+        let source = retention
+            .reader(0, len)
+            .map_err(aqueduct_cbor::Error::from)?;
         let noop = NoopRetention;
         let reader = BundleReader::new(source, noop);
         let (primary, extensions, payload) = {
@@ -198,7 +199,7 @@ impl<S: Retention> Bundle<S> {
         Ok(Bundle::from_parts(primary, extensions, payload, retention))
     }
 
-    pub fn payload_reader(&self) -> S::Reader<'_> {
+    pub fn payload_reader(&self) -> std::io::Result<S::Reader<'_>> {
         self.retention
             .reader(self.payload.data_offset, self.payload.data_len)
     }
@@ -206,6 +207,7 @@ impl<S: Retention> Bundle<S> {
     pub fn encode(&self) -> Result<Vec<u8>, Error> {
         let mut payload_data = Vec::with_capacity(self.payload.data_len as usize);
         self.payload_reader()
+            .map_err(aqueduct_cbor::Error::from)?
             .read_to_end(&mut payload_data)
             .map_err(aqueduct_cbor::Error::from)?;
 
@@ -227,5 +229,34 @@ impl<S: Retention> Bundle<S> {
         self.payload.crc.encode_and_finalize(&mut enc, block_start);
         enc.write_break();
         Ok(enc.into_bytes())
+    }
+
+    /// Encode the bundle to a writer, streaming payload from retention.
+    ///
+    /// Unlike [`encode`](Self::encode), this does not buffer the full
+    /// payload in memory.
+    pub fn encode_to<W: std::io::Write>(&self, writer: W) -> Result<(), Error> {
+        use crate::io::BundleWriter;
+
+        let mut w = BundleWriter::new(writer)?;
+        w.write_primary(&self.primary)?;
+        for ext in &self.extensions {
+            w.write_extension(ext)?;
+        }
+        w.begin_payload(self.payload.flags, self.payload.crc, self.payload.data_len)?;
+
+        let mut reader = self.payload_reader().map_err(aqueduct_cbor::Error::from)?;
+        let mut buf = [0u8; 65536];
+        loop {
+            let n = reader.read(&mut buf).map_err(aqueduct_cbor::Error::from)?;
+            if n == 0 {
+                break;
+            }
+            w.write_payload_data(&buf[..n])?;
+        }
+
+        w.end_payload()?;
+        w.finish()?;
+        Ok(())
     }
 }
