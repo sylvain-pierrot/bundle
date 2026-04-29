@@ -2,14 +2,19 @@
 
 mod disk;
 mod memory;
+#[cfg(feature = "async")]
+pub mod s3;
 
 use std::io::{self, Read, Write};
 
 #[cfg(feature = "async")]
-use futures_io::AsyncWrite;
+use async_trait::async_trait;
 
 pub use disk::DiskRetention;
 pub use memory::MemoryRetention;
+
+#[cfg(feature = "async")]
+pub use s3::{S3Ops, S3Retention};
 
 /// Storage backend where bundle bytes are retained.
 ///
@@ -25,16 +30,35 @@ pub trait Retention: Write {
     fn discard(&mut self) -> io::Result<()>;
 }
 
-/// Async write capability for retention backends.
+/// Async retention backend.
 ///
-/// Used by [`BundleAsyncReader`](crate::BundleAsyncReader) to receive
-/// bytes from an async source. The retention must also implement
-/// [`Retention`] for sync parsing after reception.
+/// Async counterpart of [`Retention`]. Used by
+/// [`BundleAsyncReader`](crate::BundleAsyncReader) and
+/// [`BundleBuilder::from_async_stream`](crate::BundleBuilder::from_async_stream).
 #[cfg(feature = "async")]
-pub trait AsyncRetention: AsyncWrite + Unpin + Retention {}
+#[async_trait]
+pub trait AsyncRetention: Send {
+    type Reader<'a>: Read
+    where
+        Self: 'a;
 
-#[cfg(feature = "async")]
-impl<T: AsyncWrite + Unpin + Retention> AsyncRetention for T {}
+    async fn write(&mut self, data: &[u8]) -> io::Result<usize>;
+
+    async fn write_all(&mut self, mut data: &[u8]) -> io::Result<()> {
+        while !data.is_empty() {
+            let n = self.write(data).await?;
+            if n == 0 {
+                return Err(io::Error::new(io::ErrorKind::WriteZero, "write returned 0"));
+            }
+            data = &data[n..];
+        }
+        Ok(())
+    }
+
+    async fn flush(&mut self) -> io::Result<()>;
+    async fn reader(&self, offset: u64, len: u64) -> io::Result<Self::Reader<'_>>;
+    async fn discard(&mut self) -> io::Result<()>;
+}
 
 /// No-op retention that discards writes.
 pub(crate) struct NoopRetention;

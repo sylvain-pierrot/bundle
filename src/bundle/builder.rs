@@ -1,5 +1,11 @@
 //! Builder for constructing bundles with sensible defaults.
 
+use std::io::Read;
+#[cfg(feature = "async")]
+use std::pin::Pin;
+#[cfg(feature = "async")]
+use std::task::Poll;
+
 use crate::bundle::Bundle;
 use crate::bundle::canonical::{
     BlockData, BlockFlags, CanonicalBlock, PAYLOAD_BLOCK_NUMBER, PAYLOAD_BLOCK_TYPE,
@@ -7,7 +13,12 @@ use crate::bundle::canonical::{
 use crate::bundle::crc::Crc;
 use crate::bundle::primary::{BundleFlags, CreationTimestamp, FragmentInfo, PrimaryBlock};
 use crate::eid::Eid;
+use crate::error::Error;
+#[cfg(feature = "async")]
+use crate::retention::AsyncRetention;
 use crate::retention::Retention;
+#[cfg(feature = "async")]
+use futures_io::AsyncRead;
 
 /// Fluent builder for [`Bundle`].
 pub struct BundleBuilder<S> {
@@ -23,19 +34,15 @@ pub struct BundleBuilder<S> {
     retention: S,
 }
 
-impl<S: Retention> BundleBuilder<S> {
-    pub fn new(
+impl<S> BundleBuilder<S> {
+    fn with_payload_len(
         dest_eid: Eid,
         src_node_id: Eid,
         lifetime: u64,
-        payload: &[u8],
-        mut retention: S,
-    ) -> Result<Self, crate::error::Error> {
-        let payload_len = payload.len() as u64;
-        retention
-            .write_all(payload)
-            .map_err(aqueduct_cbor::Error::from)?;
-        Ok(Self {
+        payload_len: u64,
+        retention: S,
+    ) -> Self {
+        Self {
             dest_eid,
             src_node_id,
             lifetime,
@@ -46,7 +53,7 @@ impl<S: Retention> BundleBuilder<S> {
             fragment: None,
             blocks: Vec::new(),
             retention,
-        })
+        }
     }
 
     pub fn is_admin_record(mut self) -> Self {
@@ -109,12 +116,10 @@ impl<S: Retention> BundleBuilder<S> {
     }
 
     pub fn build(mut self) -> Bundle<S> {
-        // RFC 9171: null source requires no_fragment flag
         if self.src_node_id.is_null() {
             self.bundle_flags |= 0x000004;
         }
 
-        // Add the payload block
         self.blocks.push(CanonicalBlock {
             block_type: PAYLOAD_BLOCK_TYPE,
             block_number: PAYLOAD_BLOCK_NUMBER,
@@ -141,5 +146,112 @@ impl<S: Retention> BundleBuilder<S> {
             self.blocks,
             self.retention,
         )
+    }
+}
+
+impl<S: Retention> BundleBuilder<S> {
+    /// Create a builder with an in-memory payload.
+    pub fn new(
+        dest_eid: Eid,
+        src_node_id: Eid,
+        lifetime: u64,
+        payload: &[u8],
+        mut retention: S,
+    ) -> Result<Self, Error> {
+        let payload_len = payload.len() as u64;
+        retention
+            .write_all(payload)
+            .map_err(aqueduct_cbor::Error::from)?;
+        retention.flush().map_err(aqueduct_cbor::Error::from)?;
+        Ok(Self::with_payload_len(
+            dest_eid,
+            src_node_id,
+            lifetime,
+            payload_len,
+            retention,
+        ))
+    }
+
+    /// Create a builder with a sync streaming payload.
+    ///
+    /// Sync-reads from `source` in 64KB chunks and sync-writes to retention.
+    /// `payload_len` must be the exact number of bytes that will be read.
+    pub fn from_stream<R: Read>(
+        dest_eid: Eid,
+        src_node_id: Eid,
+        lifetime: u64,
+        payload_len: u64,
+        mut source: R,
+        mut retention: S,
+    ) -> Result<Self, Error> {
+        let mut buf = [0u8; 65536];
+        let mut remaining = payload_len;
+        while remaining > 0 {
+            let to_read = buf.len().min(remaining as usize);
+            let n = source
+                .read(&mut buf[..to_read])
+                .map_err(aqueduct_cbor::Error::from)?;
+            if n == 0 {
+                return Err(Error::IncompleteRead);
+            }
+            retention
+                .write_all(&buf[..n])
+                .map_err(aqueduct_cbor::Error::from)?;
+            remaining -= n as u64;
+        }
+        retention.flush().map_err(aqueduct_cbor::Error::from)?;
+        Ok(Self::with_payload_len(
+            dest_eid,
+            src_node_id,
+            lifetime,
+            payload_len,
+            retention,
+        ))
+    }
+}
+
+#[cfg(feature = "async")]
+impl<S: AsyncRetention> BundleBuilder<S> {
+    /// Create a builder with an async streaming payload.
+    ///
+    /// Async-reads from `source` in 64KB chunks and async-writes to retention.
+    /// `payload_len` must be the exact number of bytes that will be read.
+    pub async fn from_async_stream<R: AsyncRead + Unpin>(
+        dest_eid: Eid,
+        src_node_id: Eid,
+        lifetime: u64,
+        payload_len: u64,
+        mut source: R,
+        mut retention: S,
+    ) -> Result<Self, Error> {
+        let mut buf = [0u8; 65536];
+        let mut remaining = payload_len;
+        while remaining > 0 {
+            let to_read = buf.len().min(remaining as usize);
+            let n = std::future::poll_fn(|cx| -> Poll<std::io::Result<usize>> {
+                Pin::new(&mut source).poll_read(cx, &mut buf[..to_read])
+            })
+            .await
+            .map_err(aqueduct_cbor::Error::from)?;
+            if n == 0 {
+                return Err(Error::IncompleteRead);
+            }
+            retention
+                .write_all(&buf[..n])
+                .await
+                .map_err(aqueduct_cbor::Error::from)?;
+            remaining -= n as u64;
+        }
+        retention
+            .flush()
+            .await
+            .map_err(aqueduct_cbor::Error::from)?;
+        Ok(Self::with_payload_len(
+            dest_eid,
+            src_node_id,
+            lifetime,
+            payload_len,
+            retention,
+        ))
     }
 }

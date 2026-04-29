@@ -5,10 +5,6 @@ pub mod extension;
 pub mod io;
 pub mod retention;
 
-pub use io::{BlockEvent, BundleReader, BundleWriter, OpenBundleReader, PayloadReader};
-#[cfg(feature = "async")]
-pub use io::{BundleAsyncReader, BundleAsyncWriter};
-
 pub use bundle::Bundle;
 pub use bundle::builder::BundleBuilder;
 pub use bundle::canonical::{BlockData, BlockFlags, CanonicalBlock};
@@ -17,6 +13,10 @@ pub use bundle::primary::{BundleFlags, CreationTimestamp, FragmentInfo, PrimaryB
 pub use eid::Eid;
 pub use error::Error;
 pub use extension::{BundleAge, Extension, HopCount, PreviousNode};
-#[cfg(feature = "async")]
-pub use retention::AsyncRetention;
+pub use io::{BlockEvent, BundleReader, BundleWriter, OpenBundleReader, PayloadReader};
 pub use retention::{DiskRetention, MemoryRetention, Retention};
+
+#[cfg(feature = "async")]
+pub use io::{BundleAsyncReader, BundleAsyncWriter};
+#[cfg(feature = "async")]
+pub use retention::{AsyncRetention, S3Ops, S3Retention};

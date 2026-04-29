@@ -116,6 +116,7 @@ impl<R: Read, S: Retention> OpenBundleReader<R, S> {
             State::Initial => {
                 self.dec.read_indefinite_array_start()?;
                 let primary = PrimaryBlock::decode(&mut self.dec)?;
+                primary.verify_crc()?;
                 self.primary = Some(primary);
                 self.state = State::Blocks;
             }
@@ -153,6 +154,7 @@ impl<R: Read, S: Retention> OpenBundleReader<R, S> {
             self.state = State::PayloadData;
             Ok(Some(BlockEvent::Payload { len: data_len }))
         } else {
+            block.verify_crc()?;
             self.blocks.push(block);
             Ok(Some(BlockEvent::Extension(self.blocks.len() - 1)))
         }

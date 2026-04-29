@@ -4,7 +4,7 @@ use std::io;
 use std::pin::Pin;
 use std::task::Poll;
 
-use futures_io::{AsyncRead, AsyncWrite};
+use futures_io::AsyncRead;
 
 use crate::bundle::Bundle;
 use crate::error::Error;
@@ -39,22 +39,33 @@ impl BundleAsyncReader {
             if n == 0 {
                 break;
             }
-            poll_write_all(&mut retention, &chunk[..n]).await?;
+            retention
+                .write_all(&chunk[..n])
+                .await
+                .map_err(|e| Error::Cbor(aqueduct_cbor::Error::from(e)))?;
             total += n as u64;
         }
 
-        poll_flush(&mut retention).await?;
+        retention
+            .flush()
+            .await
+            .map_err(|e| Error::Cbor(aqueduct_cbor::Error::from(e)))?;
 
-        // Sync parse from retained bytes
         if total == 0 {
             return Err(Error::EmptyRetention);
         }
+
         let source = retention
             .reader(0, total)
+            .await
             .map_err(aqueduct_cbor::Error::from)?;
-        let noop_bundle =
-            super::reader::OpenBundleReader::open(source, NoopRetention).into_bundle()?;
-        Ok(noop_bundle.swap_retention(retention))
+        match super::reader::OpenBundleReader::open(source, NoopRetention).into_bundle() {
+            Ok(noop_bundle) => Ok(noop_bundle.swap_retention(retention)),
+            Err(e) => {
+                let _ = retention.discard().await;
+                Err(e)
+            }
+        }
     }
 }
 
@@ -70,25 +81,4 @@ async fn poll_read<R: AsyncRead + Unpin>(reader: &mut R, buf: &mut [u8]) -> Resu
     })
     .await
     .map_err(|e| Error::Cbor(aqueduct_cbor::Error::from(e)))
-}
-
-async fn poll_write_all<W: AsyncWrite + Unpin>(
-    writer: &mut W,
-    mut buf: &[u8],
-) -> Result<(), Error> {
-    while !buf.is_empty() {
-        let n = std::future::poll_fn(|cx| -> Poll<io::Result<usize>> {
-            Pin::new(&mut *writer).poll_write(cx, buf)
-        })
-        .await
-        .map_err(|e| Error::Cbor(aqueduct_cbor::Error::from(e)))?;
-        buf = &buf[n..];
-    }
-    Ok(())
-}
-
-async fn poll_flush<W: AsyncWrite + Unpin>(writer: &mut W) -> Result<(), Error> {
-    std::future::poll_fn(|cx| -> Poll<io::Result<()>> { Pin::new(&mut *writer).poll_flush(cx) })
-        .await
-        .map_err(|e| Error::Cbor(aqueduct_cbor::Error::from(e)))
 }

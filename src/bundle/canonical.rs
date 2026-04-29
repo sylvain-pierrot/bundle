@@ -127,6 +127,24 @@ impl CanonicalBlock {
         }
     }
 
+    /// Verify the CRC of an inline (extension) block.
+    ///
+    /// Re-encodes the block, zeros the CRC field, and compares.
+    /// Returns `Ok(())` for blocks with no CRC.
+    pub fn verify_crc(&self) -> Result<(), Error> {
+        if self.crc.is_none() {
+            return Ok(());
+        }
+        let mut enc = Encoder::new();
+        self.encode(&mut enc);
+        let bytes = enc.as_bytes();
+        // CRC bstr is the last field. Find its data offset.
+        // The CRC bstr is at the end: header(1) + value(2 or 4).
+        let crc_size = self.crc.value_size();
+        let crc_data_offset = bytes.len() - crc_size;
+        self.crc.verify(bytes, crc_data_offset)
+    }
+
     pub fn parse_ext<E: Extension>(&self) -> Result<E, Error> {
         if self.block_type != E::BLOCK_TYPE {
             return Err(Error::BlockTypeMismatch {

@@ -177,6 +177,18 @@ impl PrimaryBlock {
         })
     }
 
+    pub fn verify_crc(&self) -> Result<(), Error> {
+        if self.crc.is_none() {
+            return Ok(());
+        }
+        let mut enc = Encoder::new();
+        self.encode(&mut enc);
+        let bytes = enc.as_bytes();
+        let crc_size = self.crc.value_size();
+        let crc_data_offset = bytes.len() - crc_size;
+        self.crc.verify(bytes, crc_data_offset)
+    }
+
     pub fn validate(&self) -> Result<(), Error> {
         if self.version != 7 {
             return Err(Error::UnsupportedVersion(self.version));
