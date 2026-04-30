@@ -2,6 +2,8 @@
 
 #[cfg(feature = "std")]
 mod disk;
+#[cfg(feature = "embedded-storage")]
+mod flash;
 mod memory;
 #[cfg(feature = "async")]
 pub mod s3;
@@ -12,6 +14,8 @@ pub use memory::MemoryRetention;
 
 #[cfg(feature = "std")]
 pub use disk::DiskRetention;
+#[cfg(feature = "embedded-storage")]
+pub use flash::FlashRetention;
 
 #[cfg(feature = "async")]
 use async_trait::async_trait;

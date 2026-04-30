@@ -14,6 +14,8 @@ pub use retention::{MemoryRetention, Retention};
 
 #[cfg(feature = "std")]
 pub use retention::DiskRetention;
+#[cfg(feature = "embedded-storage")]
+pub use retention::FlashRetention;
 
 #[cfg(feature = "async")]
 pub use io::{BundleAsyncReader, BundleAsyncWriter};
