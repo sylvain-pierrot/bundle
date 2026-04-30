@@ -13,6 +13,7 @@ aqueduct-bpv7 = { path = "../bpv7" }
 aqueduct-cbor = { path = "../cbor", default-features = false }
 aqueduct-io = { path = "../io", default-features = false }
 async-trait = { version = "0.1", optional = true }
+embedded-storage = { version = "0.3", optional = true }
 futures-io = { version = "0.3", optional = true }
 thiserror = { version = "2.0.18", default-features = false }
 
