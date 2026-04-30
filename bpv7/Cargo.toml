@@ -1,12 +1,13 @@
 [package]
-name = "aqueduct-cbor"
+name = "aqueduct-bpv7"
 version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["std"]
-std = ["aqueduct-io/std"]
+default = []
 
 [dependencies]
+aqueduct-cbor = { path = "../cbor", default-features = false }
 aqueduct-io = { path = "../io", default-features = false }
+crc = { version = "3", default-features = false }
 thiserror = { version = "2.0.18", default-features = false }

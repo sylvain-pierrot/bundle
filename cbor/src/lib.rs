@@ -11,13 +11,12 @@ mod consts;
 mod decode;
 mod encode;
 mod error;
-mod io;
 mod stream;
 
+pub use aqueduct_io::{Read, Write};
 pub use decode::{Decoder, UintOrTstr};
 pub use encode::Encoder;
 pub use error::Error;
-pub use io::{CborRead, CborWrite};
 pub use stream::{StreamDecoder, StreamEncoder, UintOrString};
 
 /// Decode a value from a CBOR [`Decoder`].
