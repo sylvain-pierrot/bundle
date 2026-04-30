@@ -10,10 +10,6 @@ pub enum Error {
     InvalidCbor,
     #[error("invalid UTF-8 in CBOR text string")]
     InvalidUtf8,
-    #[cfg(feature = "std")]
     #[error(transparent)]
-    Io(#[from] std::io::Error),
-    #[cfg(not(feature = "std"))]
-    #[error("I/O error")]
-    IoError,
+    Io(#[from] aqueduct_io::Error),
 }

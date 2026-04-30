@@ -1,17 +1,19 @@
-//! Streaming CBOR codec over [`CborRead`]/[`CborWrite`].
+//! Streaming CBOR codec over [`Read`]/[`Write`].
 
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use aqueduct_io::{Read, Write};
+
+use crate::Error;
 use crate::consts::*;
-use crate::{CborRead, CborWrite, Error};
 
 // ---------------------------------------------------------------------------
 // StreamDecoder
 // ---------------------------------------------------------------------------
 
-/// CBOR decoder over any [`CborRead`] source.
+/// CBOR decoder over any [`Read`] source.
 ///
 /// Returns owned data (unlike the buffer-based [`crate::Decoder`] which
 /// borrows from `&[u8]`). Use [`read_bstr_header`](Self::read_bstr_header) +
@@ -22,7 +24,7 @@ pub struct StreamDecoder<R> {
     pos: u64,
 }
 
-impl<R: CborRead> StreamDecoder<R> {
+impl<R: Read> StreamDecoder<R> {
     pub fn new(reader: R) -> Self {
         Self {
             reader,
@@ -52,7 +54,7 @@ impl<R: CborRead> StreamDecoder<R> {
             return Ok(b);
         }
         let mut buf = [0u8; 1];
-        self.reader.cbor_read_exact(&mut buf)?;
+        self.reader.read_exact(&mut buf)?;
         self.pos += 1;
         Ok(buf[0])
     }
@@ -62,13 +64,13 @@ impl<R: CborRead> StreamDecoder<R> {
             return Ok(b);
         }
         let mut buf = [0u8; 1];
-        self.reader.cbor_read_exact(&mut buf)?;
+        self.reader.read_exact(&mut buf)?;
         self.peeked = Some(buf[0]);
         Ok(buf[0])
     }
 
     fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), Error> {
-        self.reader.cbor_read_exact(buf)?;
+        self.reader.read_exact(buf)?;
         self.pos += buf.len() as u64;
         Ok(())
     }
@@ -221,7 +223,7 @@ impl<R: CborRead> StreamDecoder<R> {
         let mut buf = [0u8; 256];
         while remaining > 0 {
             let to_read = (remaining as usize).min(buf.len());
-            self.reader.cbor_read_exact(&mut buf[..to_read])?;
+            self.reader.read_exact(&mut buf[..to_read])?;
             remaining -= to_read as u64;
         }
         self.pos += len;
@@ -245,13 +247,13 @@ pub enum UintOrString {
 // StreamEncoder
 // ---------------------------------------------------------------------------
 
-/// CBOR encoder over any [`CborWrite`] sink.
+/// CBOR encoder over any [`Write`] sink.
 pub struct StreamEncoder<W> {
     writer: W,
     pos: u64,
 }
 
-impl<W: CborWrite> StreamEncoder<W> {
+impl<W: Write> StreamEncoder<W> {
     pub fn new(writer: W) -> Self {
         Self { writer, pos: 0 }
     }
@@ -273,11 +275,11 @@ impl<W: CborWrite> StreamEncoder<W> {
 
     /// Flush the inner writer.
     pub fn flush(&mut self) -> Result<(), Error> {
-        self.writer.cbor_flush()
+        Ok(self.writer.flush()?)
     }
 
     fn write_all(&mut self, data: &[u8]) -> Result<(), Error> {
-        self.writer.cbor_write_all(data)?;
+        self.writer.write_all(data)?;
         self.pos += data.len() as u64;
         Ok(())
     }
@@ -365,10 +367,10 @@ mod tests {
             u64::MAX,
         ] {
             let mut buf = Vec::new();
-            let mut enc = StreamEncoder::new(&mut buf);
-            enc.write_uint(v).unwrap();
-            drop(enc);
-
+            {
+                let mut enc = StreamEncoder::new(&mut buf);
+                enc.write_uint(v).unwrap();
+            }
             let mut dec = StreamDecoder::new(buf.as_slice());
             assert_eq!(dec.read_uint().unwrap(), v, "failed for {v}");
         }
@@ -378,10 +380,10 @@ mod tests {
     fn stream_roundtrip_bstr() {
         let data = b"hello world";
         let mut buf = Vec::new();
-        let mut enc = StreamEncoder::new(&mut buf);
-        enc.write_bstr(data).unwrap();
-        drop(enc);
-
+        {
+            let mut enc = StreamEncoder::new(&mut buf);
+            enc.write_bstr(data).unwrap();
+        }
         let mut dec = StreamDecoder::new(buf.as_slice());
         assert_eq!(dec.read_bstr().unwrap(), data);
     }
@@ -390,10 +392,10 @@ mod tests {
     fn stream_roundtrip_tstr() {
         let s = "dtn://node1/svc";
         let mut buf = Vec::new();
-        let mut enc = StreamEncoder::new(&mut buf);
-        enc.write_tstr(s).unwrap();
-        drop(enc);
-
+        {
+            let mut enc = StreamEncoder::new(&mut buf);
+            enc.write_tstr(s).unwrap();
+        }
         let mut dec = StreamDecoder::new(buf.as_slice());
         assert_eq!(dec.read_tstr().unwrap(), s);
     }
@@ -401,12 +403,12 @@ mod tests {
     #[test]
     fn stream_indefinite_array() {
         let mut buf = Vec::new();
-        let mut enc = StreamEncoder::new(&mut buf);
-        enc.write_indefinite_array().unwrap();
-        enc.write_uint(42).unwrap();
-        enc.write_break().unwrap();
-        drop(enc);
-
+        {
+            let mut enc = StreamEncoder::new(&mut buf);
+            enc.write_indefinite_array().unwrap();
+            enc.write_uint(42).unwrap();
+            enc.write_break().unwrap();
+        }
         let mut dec = StreamDecoder::new(buf.as_slice());
         dec.read_indefinite_array_start().unwrap();
         assert!(!dec.is_break().unwrap());
@@ -419,16 +421,16 @@ mod tests {
     fn stream_bstr_header_then_manual_read() {
         let payload = b"streaming payload data";
         let mut buf = Vec::new();
-        let mut enc = StreamEncoder::new(&mut buf);
-        enc.write_bstr(payload).unwrap();
-        drop(enc);
-
+        {
+            let mut enc = StreamEncoder::new(&mut buf);
+            enc.write_bstr(payload).unwrap();
+        }
         let mut dec = StreamDecoder::new(buf.as_slice());
         let len = dec.read_bstr_header().unwrap();
         assert_eq!(len, payload.len() as u64);
 
         let mut data = vec![0u8; len as usize];
-        dec.inner().cbor_read_exact(&mut data).unwrap();
+        dec.inner().read_exact(&mut data).unwrap();
         dec.advance(len);
         assert_eq!(data, payload);
     }
@@ -436,11 +438,11 @@ mod tests {
     #[test]
     fn stream_skip() {
         let mut buf = Vec::new();
-        let mut enc = StreamEncoder::new(&mut buf);
-        enc.write_bstr(b"skip me").unwrap();
-        enc.write_uint(99).unwrap();
-        drop(enc);
-
+        {
+            let mut enc = StreamEncoder::new(&mut buf);
+            enc.write_bstr(b"skip me").unwrap();
+            enc.write_uint(99).unwrap();
+        }
         let mut dec = StreamDecoder::new(buf.as_slice());
         let len = dec.read_bstr_header().unwrap();
         dec.skip(len).unwrap();
@@ -466,12 +468,12 @@ mod tests {
     #[test]
     fn cross_format_stream_encode_buffer_decode() {
         let mut buf = Vec::new();
-        let mut enc = StreamEncoder::new(&mut buf);
-        enc.write_array(2).unwrap();
-        enc.write_uint(42).unwrap();
-        enc.write_tstr("test").unwrap();
-        drop(enc);
-
+        {
+            let mut enc = StreamEncoder::new(&mut buf);
+            enc.write_array(2).unwrap();
+            enc.write_uint(42).unwrap();
+            enc.write_tstr("test").unwrap();
+        }
         let mut dec = Decoder::new(&buf);
         assert_eq!(dec.read_array_len().unwrap(), 2);
         assert_eq!(dec.read_uint().unwrap(), 42);
@@ -481,14 +483,15 @@ mod tests {
     #[test]
     fn stream_position_tracking() {
         let mut buf = Vec::new();
-        let mut enc = StreamEncoder::new(&mut buf);
-        assert_eq!(enc.position(), 0);
-        enc.write_uint(1).unwrap();
-        assert_eq!(enc.position(), 1);
-        enc.write_bstr(b"hello").unwrap();
-        let end_pos = enc.position();
-        drop(enc);
-
+        let end_pos;
+        {
+            let mut enc = StreamEncoder::new(&mut buf);
+            assert_eq!(enc.position(), 0);
+            enc.write_uint(1).unwrap();
+            assert_eq!(enc.position(), 1);
+            enc.write_bstr(b"hello").unwrap();
+            end_pos = enc.position();
+        }
         let mut dec = StreamDecoder::new(buf.as_slice());
         assert_eq!(dec.position(), 0);
         dec.read_uint().unwrap();

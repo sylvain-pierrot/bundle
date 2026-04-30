@@ -27,11 +27,12 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 name = "aqueduct"
 version = "0.1.0"
 dependencies = [
+ "aqueduct-bpv7",
  "aqueduct-cbor",
+ "aqueduct-io",
  "async-trait",
  "aws-config",
  "aws-sdk-s3",
- "crc",
  "futures",
  "futures-io",
  "thiserror",
@@ -40,9 +41,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "aqueduct-bpv7"
+version = "0.1.0"
+dependencies = [
+ "aqueduct-cbor",
+ "aqueduct-io",
+ "crc",
+ "thiserror",
+]
+
+[[package]]
 name = "aqueduct-cbor"
 version = "0.1.0"
 dependencies = [
+ "aqueduct-io",
+ "thiserror",
+]
+
+[[package]]
+name = "aqueduct-io"
+version = "0.1.0"
+dependencies = [
+ "embedded-io",
  "thiserror",
 ]
 
@@ -887,6 +907,12 @@ dependencies = [
  "subtle",
  "zeroize",
 ]
+
+[[package]]
+name = "embedded-io"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 
 [[package]]
 name = "equivalent"
