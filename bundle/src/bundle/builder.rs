@@ -13,7 +13,7 @@ use core::task::Poll;
 
 use bundle_bpv7::{
     BlockData, BlockFlags, BundleFlags, CanonicalBlock, Crc, CreationTimestamp, Eid, Error,
-    FragmentInfo, PAYLOAD_BLOCK_NUMBER, PAYLOAD_BLOCK_TYPE, PrimaryBlock,
+    Extension, FragmentInfo, PAYLOAD_BLOCK_NUMBER, PAYLOAD_BLOCK_TYPE, PrimaryBlock,
 };
 
 use crate::bundle::Bundle;
@@ -114,8 +114,20 @@ impl<S> BundleBuilder<S> {
         self
     }
 
-    pub fn extension(mut self, block: CanonicalBlock) -> Self {
-        self.blocks.push(block);
+    pub fn extension(mut self, ext: impl Extension) -> Self {
+        let next_num = self
+            .blocks
+            .iter()
+            .map(|b| b.block_number)
+            .max()
+            .unwrap_or(1)
+            + 1;
+        self.blocks.push(CanonicalBlock::from_ext(
+            next_num,
+            BlockFlags::from_bits(0),
+            Crc::None,
+            &ext,
+        ));
         self
     }
 

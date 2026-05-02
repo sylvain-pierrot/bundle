@@ -605,19 +605,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bundle-bpa"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "bundle",
- "bundle-bpv7",
- "bundle-cbor",
- "bundle-io",
- "futures",
- "tokio",
-]
-
-[[package]]
 name = "bundle-bpv7"
 version = "0.1.0"
 dependencies = [
@@ -2156,6 +2143,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "tcp-stream"
+version = "0.1.0"
+dependencies = [
+ "bundle",
+ "bundle-bpv7",
+ "bundle-io",
 ]
 
 [[package]]
