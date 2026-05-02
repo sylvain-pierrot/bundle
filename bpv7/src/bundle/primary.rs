@@ -1,4 +1,4 @@
-use aqueduct_cbor::{Decoder, Encoder, ToCbor};
+use bundle_cbor::{Decoder, Encoder, ToCbor};
 
 use crate::crc::Crc;
 use crate::eid::Eid;
@@ -177,8 +177,8 @@ impl PrimaryBlock {
     }
 
     /// Decode from a streaming CBOR decoder.
-    pub fn decode_stream<R: aqueduct_cbor::Read>(
-        dec: &mut aqueduct_cbor::StreamDecoder<R>,
+    pub fn decode_stream<R: bundle_cbor::Read>(
+        dec: &mut bundle_cbor::StreamDecoder<R>,
     ) -> Result<Self, Error> {
         let len = dec.read_array_len()?;
         if !(8..=11).contains(&len) {

@@ -8,7 +8,7 @@
 use alloc::vec::Vec;
 use core::cell::RefCell;
 
-use aqueduct_io::{Error as IoError, Read, Write};
+use bundle_io::{Error as IoError, Read, Write};
 use embedded_storage::nor_flash::{NorFlash, ReadNorFlash};
 
 use super::Retention;

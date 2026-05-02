@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use aqueduct_cbor::{Decoder, Encoder};
+use bundle_cbor::{Decoder, Encoder};
 
 use crate::error::Error;
 use crate::extension::Extension;

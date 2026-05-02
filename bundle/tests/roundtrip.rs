@@ -1,5 +1,5 @@
-use aqueduct::{BundleBuilder, BundleReader, MemoryRetention};
-use aqueduct_bpv7::{
+use bundle::{BundleBuilder, BundleReader, MemoryRetention};
+use bundle_bpv7::{
     BlockFlags, BundleAge, BundleFlags, CanonicalBlock, Crc, CrcHasher, CreationTimestamp, Eid,
     Extension, HopCount, PreviousNode,
 };

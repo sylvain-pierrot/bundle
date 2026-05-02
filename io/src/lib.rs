@@ -1,8 +1,8 @@
-//! Portable I/O traits for aqueduct.
+//! Portable I/O traits for bundle.
 //!
 //! [`Read`] and [`Write`] abstract over `std::io` (with `std` feature)
 //! and `embedded-io` (without `std`). All streaming code in the
-//! aqueduct workspace is written against these traits.
+//! bundle workspace is written against these traits.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 extern crate alloc;

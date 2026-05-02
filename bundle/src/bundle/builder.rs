@@ -2,14 +2,14 @@
 
 use alloc::vec::Vec;
 
-use aqueduct_io::{Error as IoError, Read};
+use bundle_io::{Error as IoError, Read};
 
 #[cfg(feature = "async")]
 use core::pin::Pin;
 #[cfg(feature = "async")]
 use core::task::Poll;
 
-use aqueduct_bpv7::{
+use bundle_bpv7::{
     BlockData, BlockFlags, BundleFlags, CanonicalBlock, Crc, CreationTimestamp, Eid, Error,
     FragmentInfo, PAYLOAD_BLOCK_NUMBER, PAYLOAD_BLOCK_TYPE, PrimaryBlock,
 };

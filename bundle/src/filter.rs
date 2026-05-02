@@ -4,17 +4,17 @@
 //! Configure once, every bundle follows the same rules.
 //! Rejected bundles waste zero I/O.
 //!
-//! Traits and built-in filters are in [`aqueduct_bpv7::filter`].
+//! Traits and built-in filters are in [`bundle_bpv7::filter`].
 //! This module provides [`FilterChain`] which wires them into
 //! the streaming I/O pipeline.
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-use aqueduct_bpv7::{CanonicalBlock, PrimaryBlock};
+use bundle_bpv7::{CanonicalBlock, PrimaryBlock};
 
-pub use aqueduct_bpv7::filter::builtin;
-pub use aqueduct_bpv7::filter::{BundleFilter, BundleMetadata, BundleMutator, FilterRejection};
+pub use bundle_bpv7::filter::builtin;
+pub use bundle_bpv7::filter::{BundleFilter, BundleMetadata, BundleMutator, FilterRejection};
 
 /// An ordered collection of filters and mutators.
 ///

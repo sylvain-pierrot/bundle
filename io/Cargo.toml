@@ -1,5 +1,5 @@
 [package]
-name = "aqueduct-io"
+name = "bundle-io"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,5 +8,5 @@ default = ["std"]
 std = []
 
 [dependencies]
-embedded-io = { version = "0.6", default-features = false }
+embedded-io = { version = "0.7.1", default-features = false }
 thiserror = { version = "2.0.18", default-features = false }

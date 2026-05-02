@@ -11,5 +11,5 @@ pub enum Error {
     #[error("invalid UTF-8 in CBOR text string")]
     InvalidUtf8,
     #[error(transparent)]
-    Io(#[from] aqueduct_io::Error),
+    Io(#[from] bundle_io::Error),
 }

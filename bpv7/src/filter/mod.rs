@@ -1,7 +1,7 @@
 //! Bundle filtering and mutation pipeline.
 //!
 //! Trait definitions and built-in filters/mutators.
-//! The `FilterChain` orchestrator stays in the main aqueduct crate.
+//! The `FilterChain` orchestrator stays in the main bundle crate.
 
 pub mod builtin;
 pub mod error;

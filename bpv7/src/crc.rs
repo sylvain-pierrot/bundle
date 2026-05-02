@@ -1,4 +1,4 @@
-use aqueduct_cbor::{Decoder, Encoder};
+use bundle_cbor::{Decoder, Encoder};
 
 use crate::error::Error;
 
@@ -119,8 +119,8 @@ impl Crc {
     }
 
     /// Decode a CRC value byte string from a streaming CBOR decoder.
-    pub fn decode_stream<R: aqueduct_cbor::Read>(
-        dec: &mut aqueduct_cbor::StreamDecoder<R>,
+    pub fn decode_stream<R: bundle_cbor::Read>(
+        dec: &mut bundle_cbor::StreamDecoder<R>,
         crc_type: u64,
     ) -> Result<Self, Error> {
         let bytes = dec.read_bstr()?;
@@ -285,7 +285,7 @@ mod tests {
 
     #[test]
     fn decode_buf_crc16() {
-        let mut enc = aqueduct_cbor::Encoder::new();
+        let mut enc = bundle_cbor::Encoder::new();
         enc.write_bstr(&0x906E_u16.to_be_bytes());
         let mut dec = Decoder::new(enc.as_bytes());
         let crc = Crc::decode_buf(&mut dec, 1).unwrap();
@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn decode_buf_crc32c() {
-        let mut enc = aqueduct_cbor::Encoder::new();
+        let mut enc = bundle_cbor::Encoder::new();
         enc.write_bstr(&0xE3069283_u32.to_be_bytes());
         let mut dec = Decoder::new(enc.as_bytes());
         let crc = Crc::decode_buf(&mut dec, 2).unwrap();

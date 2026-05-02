@@ -1,10 +1,10 @@
-use aqueduct::{BundleBuilder, BundleReader, MemoryRetention};
-use aqueduct_bpv7::filter::builtin::{
+use bundle::{BundleBuilder, BundleReader, MemoryRetention};
+use bundle_bpv7::filter::builtin::{
     DestinationFilter, HopCountFilter, HopCountIncrementMutator, MaxPayloadSizeFilter,
     PreviousNodeMutator,
 };
-use aqueduct_bpv7::{BlockFlags, CanonicalBlock, Crc, Eid, Error, HopCount, PreviousNode};
-use aqueduct_io::Read;
+use bundle_bpv7::{BlockFlags, CanonicalBlock, Crc, Eid, Error, HopCount, PreviousNode};
+use bundle_io::Read;
 
 fn local_eid() -> Eid {
     Eid::Ipn {

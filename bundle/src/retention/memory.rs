@@ -1,4 +1,4 @@
-use aqueduct_io::{Error as IoError, Write};
+use bundle_io::{Error as IoError, Write};
 
 use super::Retention;
 

@@ -13,7 +13,7 @@ mod encode;
 mod error;
 mod stream;
 
-pub use aqueduct_io::{Read, Write};
+pub use bundle_io::{Read, Write};
 pub use decode::{Decoder, UintOrTstr};
 pub use encode::Encoder;
 pub use error::Error;

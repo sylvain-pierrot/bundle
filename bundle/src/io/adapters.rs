@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 
-use aqueduct_io::{Error as IoError, Read, Write};
+use bundle_io::{Error as IoError, Read, Write};
 
 use crate::retention::Retention;
 

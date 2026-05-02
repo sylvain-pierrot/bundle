@@ -5,9 +5,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Poll;
 
-use aqueduct_bpv7::{CanonicalBlock, Crc, Error, PrimaryBlock};
-use aqueduct_cbor::StreamDecoder;
-use aqueduct_io::Error as IoError;
+use bundle_bpv7::{CanonicalBlock, Crc, Error, PrimaryBlock};
+use bundle_cbor::StreamDecoder;
+use bundle_io::Error as IoError;
 use futures_io::AsyncRead;
 
 use super::reader::{BlockEvent, OpenBundleReader};
@@ -228,5 +228,5 @@ async fn poll_read<R: AsyncRead + Unpin>(reader: &mut R, buf: &mut [u8]) -> Resu
         Pin::new(&mut *reader).poll_read(cx, buf)
     })
     .await
-    .map_err(|e| Error::Cbor(aqueduct_cbor::Error::Io(IoError::Io(e))))
+    .map_err(|e| Error::Cbor(bundle_cbor::Error::Io(IoError::Io(e))))
 }

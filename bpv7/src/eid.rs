@@ -1,6 +1,6 @@
 use alloc::string::String;
 
-use aqueduct_cbor::{Decoder, Encoder, ToCbor, UintOrTstr};
+use bundle_cbor::{Decoder, Encoder, ToCbor, UintOrTstr};
 
 use crate::error::Error;
 
@@ -56,8 +56,8 @@ impl Eid {
     }
 
     /// Decode from a streaming CBOR decoder.
-    pub fn decode_stream<R: aqueduct_cbor::Read>(
-        dec: &mut aqueduct_cbor::StreamDecoder<R>,
+    pub fn decode_stream<R: bundle_cbor::Read>(
+        dec: &mut bundle_cbor::StreamDecoder<R>,
     ) -> Result<Self, Error> {
         let len = dec.read_array_len()?;
         if len != 2 {
@@ -66,9 +66,9 @@ impl Eid {
         let scheme = dec.read_uint()?;
         match scheme {
             1 => match dec.read_uint_or_tstr()? {
-                aqueduct_cbor::UintOrString::Uint(0) => Ok(Eid::Null),
-                aqueduct_cbor::UintOrString::Uint(_) => Err(Error::InvalidEid),
-                aqueduct_cbor::UintOrString::Tstr(s) => Ok(Eid::Dtn(s)),
+                bundle_cbor::UintOrString::Uint(0) => Ok(Eid::Null),
+                bundle_cbor::UintOrString::Uint(_) => Err(Error::InvalidEid),
+                bundle_cbor::UintOrString::Tstr(s) => Ok(Eid::Dtn(s)),
             },
             2 => {
                 let inner_len = dec.read_array_len()?;

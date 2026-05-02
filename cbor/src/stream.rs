@@ -4,7 +4,7 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use aqueduct_io::{Read, Write};
+use bundle_io::{Read, Write};
 
 use crate::Error;
 use crate::consts::*;

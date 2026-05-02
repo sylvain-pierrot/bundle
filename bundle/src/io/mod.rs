@@ -9,7 +9,7 @@ mod reader;
 mod writer;
 
 pub use reader::{BlockEvent, BundleReader, OpenBundleReader, PayloadReader};
-pub use writer::BundleWriter;
+pub use writer::{BundleWriter, OpenBundleWriter};
 
 #[cfg(feature = "async")]
 pub use async_reader::BundleAsyncReader;

@@ -10,7 +10,7 @@ pub use primary::{BundleFlags, CreationTimestamp, FragmentInfo, PrimaryBlock};
 
 use alloc::vec::Vec;
 
-use aqueduct_cbor::{Encoder, ToCbor};
+use bundle_cbor::{Encoder, ToCbor};
 
 use crate::crc::Crc;
 use crate::error::Error;
@@ -19,7 +19,7 @@ use crate::error::Error;
 ///
 /// Pure data — holds metadata and block descriptors in memory.
 /// No I/O, no retention. Constructed via buffer-based decode
-/// or by the streaming reader in the `aqueduct` crate.
+/// or by the streaming reader in the `bundle` crate.
 #[derive(Debug, Clone)]
 pub struct Bundle {
     primary: PrimaryBlock,

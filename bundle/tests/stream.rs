@@ -1,8 +1,8 @@
-use aqueduct::{BlockEvent, BundleBuilder, BundleReader, BundleWriter, MemoryRetention};
-use aqueduct_bpv7::{
+use bundle::{BlockEvent, BundleBuilder, BundleReader, BundleWriter, MemoryRetention};
+use bundle_bpv7::{
     BlockFlags, BundleFlags, CanonicalBlock, Crc, CreationTimestamp, Eid, HopCount, PrimaryBlock,
 };
-use aqueduct_io::Read;
+use bundle_io::Read;
 
 #[test]
 fn stream_roundtrip_minimal() {
@@ -20,7 +20,7 @@ fn stream_roundtrip_minimal() {
     let payload = b"hello streaming";
 
     let mut buf = Vec::new();
-    let mut writer = BundleWriter::new(&mut buf).unwrap();
+    let mut writer = BundleWriter::new().open(&mut buf).unwrap();
     writer.write_primary(&primary).unwrap();
     writer
         .begin_payload(BlockFlags::from_bits(0), Crc::None, payload.len() as u64)
@@ -72,7 +72,7 @@ fn stream_roundtrip_with_crc() {
     let payload = b"payload with crc";
 
     let mut buf = Vec::new();
-    let mut writer = BundleWriter::new(&mut buf).unwrap();
+    let mut writer = BundleWriter::new().open(&mut buf).unwrap();
     writer.write_primary(&primary).unwrap();
     writer
         .begin_payload(BlockFlags::from_bits(0), Crc::crc16(), payload.len() as u64)
@@ -121,7 +121,7 @@ fn stream_roundtrip_with_extensions() {
     let ext = CanonicalBlock::from_ext(2, BlockFlags::from_bits(0), Crc::None, &hc);
 
     let mut buf = Vec::new();
-    let mut writer = BundleWriter::new(&mut buf).unwrap();
+    let mut writer = BundleWriter::new().open(&mut buf).unwrap();
     writer.write_primary(&primary).unwrap();
     writer.write_extension(&ext).unwrap();
     writer
@@ -160,7 +160,7 @@ fn stream_walk() {
     };
 
     let mut buf = Vec::new();
-    let mut writer = BundleWriter::new(&mut buf).unwrap();
+    let mut writer = BundleWriter::new().open(&mut buf).unwrap();
     writer.write_primary(&primary).unwrap();
     writer
         .begin_payload(BlockFlags::from_bits(0), Crc::None, 1000)
@@ -196,7 +196,7 @@ fn stream_compatible_with_inmemory() {
     let payload = b"cross-api test";
 
     let mut stream_buf = Vec::new();
-    let mut writer = BundleWriter::new(&mut stream_buf).unwrap();
+    let mut writer = BundleWriter::new().open(&mut stream_buf).unwrap();
     writer.write_primary(&primary).unwrap();
     writer
         .begin_payload(BlockFlags::from_bits(0), Crc::None, payload.len() as u64)
@@ -238,7 +238,7 @@ fn stream_forwarding_pattern() {
     let payload = b"forwarded payload";
 
     let mut original = Vec::new();
-    let mut w = BundleWriter::new(&mut original).unwrap();
+    let mut w = BundleWriter::new().open(&mut original).unwrap();
     w.write_primary(&primary).unwrap();
     w.begin_payload(BlockFlags::from_bits(0), Crc::None, payload.len() as u64)
         .unwrap();
@@ -249,7 +249,7 @@ fn stream_forwarding_pattern() {
     let mut session = BundleReader::new().open(original.as_slice(), MemoryRetention::new());
 
     let mut forwarded = Vec::new();
-    let mut writer = BundleWriter::new(&mut forwarded).unwrap();
+    let mut writer = BundleWriter::new().open(&mut forwarded).unwrap();
     let mut wrote_primary = false;
 
     while let Some(event) = session.next_block().unwrap() {
@@ -363,7 +363,7 @@ fn retention_builder_payload_reader() {
 #[test]
 fn writer_rejects_excess_payload() {
     let mut buf = Vec::new();
-    let mut writer = BundleWriter::new(&mut buf).unwrap();
+    let mut writer = BundleWriter::new().open(&mut buf).unwrap();
     writer
         .write_primary(&PrimaryBlock {
             version: 7,
@@ -398,7 +398,7 @@ fn reader_walk_partial() {
     };
 
     let mut buf = Vec::new();
-    let mut writer = BundleWriter::new(&mut buf).unwrap();
+    let mut writer = BundleWriter::new().open(&mut buf).unwrap();
     writer.write_primary(&primary).unwrap();
     writer
         .begin_payload(BlockFlags::from_bits(0), Crc::None, 100)
@@ -420,7 +420,7 @@ fn reader_walk_partial() {
 
 #[test]
 fn disk_retention_roundtrip() {
-    let path = "/tmp/aqueduct_test_disk_retention.bin";
+    let path = "/tmp/bundle_test_disk_retention.bin";
     let payload = b"disk retention test payload data";
 
     let bundle = BundleBuilder::new(
@@ -439,7 +439,7 @@ fn disk_retention_roundtrip() {
     .unwrap();
 
     let encoded = bundle.encode().unwrap();
-    let disk = aqueduct::DiskRetention::new(path).unwrap();
+    let disk = bundle::DiskRetention::new(path).unwrap();
     let decoded = BundleReader::new()
         .read_from(encoded.as_slice(), disk)
         .unwrap();
@@ -460,8 +460,8 @@ fn disk_retention_roundtrip() {
 
 #[test]
 fn disk_retention_from_stream() {
-    let bundle_path = "/tmp/aqueduct_test_bundle_stream.bin";
-    let retention_path = "/tmp/aqueduct_test_retention_stream.bin";
+    let bundle_path = "/tmp/bundle_test_bundle_stream.bin";
+    let retention_path = "/tmp/bundle_test_retention_stream.bin";
     let payload = b"streaming to disk";
 
     let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
@@ -472,7 +472,7 @@ fn disk_retention_from_stream() {
     std::fs::write(bundle_path, &encoded).unwrap();
 
     let file = std::fs::File::open(bundle_path).unwrap();
-    let disk = aqueduct::DiskRetention::new(retention_path).unwrap();
+    let disk = bundle::DiskRetention::new(retention_path).unwrap();
     let decoded = BundleReader::new().read_from(file, disk).unwrap();
 
     let mut buf = Vec::new();
@@ -504,7 +504,7 @@ fn streaming_crc_matches_inmemory_crc() {
     };
 
     let mut stream_buf = Vec::new();
-    let mut writer = BundleWriter::new(&mut stream_buf).unwrap();
+    let mut writer = BundleWriter::new().open(&mut stream_buf).unwrap();
     writer.write_primary(&primary).unwrap();
     writer
         .begin_payload(BlockFlags::from_bits(0), Crc::crc16(), payload.len() as u64)

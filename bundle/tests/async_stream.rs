@@ -1,14 +1,14 @@
 #![cfg(feature = "async")]
 
-use aqueduct::{
+use async_trait::async_trait;
+use bundle::{
     AsyncRetention, BundleAsyncReader, BundleAsyncWriter, BundleBuilder, BundleReader,
     MemoryRetention, Retention,
 };
-use aqueduct_bpv7::{
+use bundle_bpv7::{
     BlockFlags, BundleFlags, CanonicalBlock, Crc, CreationTimestamp, Eid, HopCount, PrimaryBlock,
 };
-use aqueduct_io::{Error as IoError, Read, Write};
-use async_trait::async_trait;
+use bundle_io::{Error as IoError, Read, Write};
 
 /// Test-only async wrapper around MemoryRetention.
 struct AsyncMemoryRetention(MemoryRetention);

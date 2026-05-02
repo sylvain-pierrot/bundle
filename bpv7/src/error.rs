@@ -5,7 +5,7 @@ use crate::filter::FilterRejection;
 #[derive(Error, Debug)]
 pub enum Error {
     #[error(transparent)]
-    Cbor(#[from] aqueduct_cbor::Error),
+    Cbor(#[from] bundle_cbor::Error),
 
     #[error("unsupported bundle version: {0}")]
     UnsupportedVersion(u8),
@@ -74,8 +74,8 @@ impl From<FilterRejection> for Error {
     }
 }
 
-impl From<aqueduct_io::Error> for Error {
-    fn from(e: aqueduct_io::Error) -> Self {
-        Error::Cbor(aqueduct_cbor::Error::Io(e))
+impl From<bundle_io::Error> for Error {
+    fn from(e: bundle_io::Error) -> Self {
+        Error::Cbor(bundle_cbor::Error::Io(e))
     }
 }
