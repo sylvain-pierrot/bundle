@@ -24,12 +24,19 @@ use crate::retention::AsyncRetention;
 #[cfg(feature = "async")]
 use futures_io::AsyncRead;
 
+enum Payload {
+    /// Payload bytes to write to retention during build().
+    Deferred(Vec<u8>),
+    /// Already written to retention (from_stream paths).
+    Written(u64),
+}
+
 /// Fluent builder for [`Bundle`].
 pub struct BundleBuilder<S> {
     dest_eid: Eid,
     src_node_id: Eid,
     lifetime: u64,
-    payload_len: u64,
+    payload: Payload,
     bundle_flags: u64,
     rpt_eid: Eid,
     creation_ts: CreationTimestamp,
@@ -39,18 +46,18 @@ pub struct BundleBuilder<S> {
 }
 
 impl<S> BundleBuilder<S> {
-    fn with_payload_len(
+    fn new_inner(
         dest_eid: Eid,
         src_node_id: Eid,
         lifetime: u64,
-        payload_len: u64,
+        payload: Payload,
         retention: S,
     ) -> Self {
         Self {
             dest_eid,
             src_node_id,
             lifetime,
-            payload_len,
+            payload,
             bundle_flags: 0,
             rpt_eid: Eid::Null,
             creation_ts: CreationTimestamp { time: 0, seq: 0 },
@@ -60,12 +67,12 @@ impl<S> BundleBuilder<S> {
         }
     }
 
-    pub fn is_admin_record(mut self) -> Self {
+    pub fn admin_record(mut self) -> Self {
         self.bundle_flags |= 0x000002;
         self
     }
 
-    pub fn must_not_fragment(mut self) -> Self {
+    pub fn do_not_fragment(mut self) -> Self {
         self.bundle_flags |= 0x000004;
         self
     }
@@ -114,7 +121,7 @@ impl<S> BundleBuilder<S> {
         self
     }
 
-    pub fn extension(mut self, ext: impl Extension) -> Self {
+    pub fn extension(mut self, ext: impl Extension, flags: BlockFlags, crc: Crc) -> Self {
         let next_num = self
             .blocks
             .iter()
@@ -122,75 +129,35 @@ impl<S> BundleBuilder<S> {
             .max()
             .unwrap_or(1)
             + 1;
-        self.blocks.push(CanonicalBlock::from_ext(
-            next_num,
-            BlockFlags::from_bits(0),
-            Crc::None,
-            &ext,
-        ));
+        self.blocks
+            .push(CanonicalBlock::from_ext(next_num, flags, crc, &ext));
         self
-    }
-
-    pub fn build(mut self) -> Result<Bundle<S>, Error> {
-        if self.src_node_id.is_null() {
-            self.bundle_flags |= 0x000004;
-        }
-
-        self.blocks.push(CanonicalBlock {
-            block_type: PAYLOAD_BLOCK_TYPE,
-            block_number: PAYLOAD_BLOCK_NUMBER,
-            flags: BlockFlags::from_bits(0),
-            crc: Crc::None,
-            data: BlockData::Retained {
-                offset: 0,
-                len: self.payload_len,
-            },
-        });
-
-        let bundle = Bundle::from_parts(
-            PrimaryBlock {
-                version: 7,
-                flags: BundleFlags::from_bits(self.bundle_flags),
-                crc: Crc::crc32c(),
-                dest_eid: self.dest_eid,
-                src_node_id: self.src_node_id,
-                rpt_eid: self.rpt_eid,
-                creation_ts: self.creation_ts,
-                lifetime: self.lifetime,
-                fragment: self.fragment,
-            },
-            self.blocks,
-            self.retention,
-        );
-        bundle.validate()?;
-        Ok(bundle)
     }
 }
 
 impl<S: Retention> BundleBuilder<S> {
     /// Create a builder with an in-memory payload.
+    ///
+    /// Payload is written to retention during [`build`](Self::build).
     pub fn new(
         dest_eid: Eid,
         src_node_id: Eid,
         lifetime: u64,
         payload: &[u8],
-        mut retention: S,
-    ) -> Result<Self, Error> {
-        let payload_len = payload.len() as u64;
-        retention.write_all(payload)?;
-        retention.flush()?;
-        Ok(Self::with_payload_len(
+        retention: S,
+    ) -> Self {
+        Self::new_inner(
             dest_eid,
             src_node_id,
             lifetime,
-            payload_len,
+            Payload::Deferred(payload.to_vec()),
             retention,
-        ))
+        )
     }
 
     /// Create a builder with a sync streaming payload.
     ///
-    /// Sync-reads from `source` in 64KB chunks and sync-writes to retention.
+    /// Reads from `source` in 64KB chunks and writes to retention immediately.
     /// `payload_len` must be the exact number of bytes that will be read.
     pub fn from_stream<R: Read>(
         dest_eid: Eid,
@@ -212,13 +179,57 @@ impl<S: Retention> BundleBuilder<S> {
             remaining -= n as u64;
         }
         retention.flush()?;
-        Ok(Self::with_payload_len(
+        Ok(Self::new_inner(
             dest_eid,
             src_node_id,
             lifetime,
-            payload_len,
+            Payload::Written(payload_len),
             retention,
         ))
+    }
+
+    pub fn build(mut self) -> Result<Bundle<S>, Error> {
+        if self.src_node_id.is_null() {
+            self.bundle_flags |= 0x000004;
+        }
+
+        let payload_len = match self.payload {
+            Payload::Deferred(ref data) => {
+                self.retention.write_all(data)?;
+                self.retention.flush()?;
+                data.len() as u64
+            }
+            Payload::Written(len) => len,
+        };
+
+        self.blocks.push(CanonicalBlock {
+            block_type: PAYLOAD_BLOCK_TYPE,
+            block_number: PAYLOAD_BLOCK_NUMBER,
+            flags: BlockFlags::from_bits(0),
+            crc: Crc::None,
+            data: BlockData::Retained {
+                offset: 0,
+                len: payload_len,
+            },
+        });
+
+        let bundle = Bundle::from_parts(
+            PrimaryBlock {
+                version: 7,
+                flags: BundleFlags::from_bits(self.bundle_flags),
+                crc: Crc::crc32c(),
+                dest_eid: self.dest_eid,
+                src_node_id: self.src_node_id,
+                rpt_eid: self.rpt_eid,
+                creation_ts: self.creation_ts,
+                lifetime: self.lifetime,
+                fragment: self.fragment,
+            },
+            self.blocks,
+            self.retention,
+        );
+        bundle.validate()?;
+        Ok(bundle)
     }
 }
 
@@ -252,11 +263,11 @@ impl<S: AsyncRetention> BundleBuilder<S> {
             remaining -= n as u64;
         }
         retention.flush().await?;
-        Ok(Self::with_payload_len(
+        Ok(Self::new_inner(
             dest_eid,
             src_node_id,
             lifetime,
-            payload_len,
+            Payload::Written(payload_len),
             retention,
         ))
     }

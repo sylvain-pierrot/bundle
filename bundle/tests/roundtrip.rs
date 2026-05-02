@@ -14,7 +14,6 @@ fn roundtrip_minimal_bundle() {
         payload,
         MemoryRetention::new(),
     )
-    .unwrap()
     .build()
     .unwrap();
     let encoded = bundle.encode().unwrap();
@@ -33,7 +32,6 @@ fn roundtrip_minimal_bundle() {
 #[test]
 fn roundtrip_empty_payload() {
     let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, b"", MemoryRetention::new())
-        .unwrap()
         .build()
         .unwrap();
     let encoded = bundle.encode().unwrap();
@@ -67,23 +65,20 @@ fn roundtrip_with_extensions() {
         payload,
         MemoryRetention::new(),
     )
-    .unwrap()
     .creation_ts(CreationTimestamp { time: 1000, seq: 1 })
-    .extension(CanonicalBlock::from_ext(
-        2,
-        BlockFlags::from_bits(0),
-        Crc::None,
-        &HopCount {
+    .extension(
+        HopCount {
             limit: 30,
             count: 0,
         },
-    ))
-    .extension(CanonicalBlock::from_ext(
-        3,
         BlockFlags::from_bits(0),
         Crc::None,
-        &BundleAge { millis: 12345 },
-    ))
+    )
+    .extension(
+        BundleAge { millis: 12345 },
+        BlockFlags::from_bits(0),
+        Crc::None,
+    )
     .build()
     .unwrap();
 
@@ -128,7 +123,6 @@ fn roundtrip_with_dtn_eids() {
         b"",
         MemoryRetention::new(),
     )
-    .unwrap()
     .build()
     .unwrap();
 
@@ -155,7 +149,6 @@ fn roundtrip_with_dtn_eids() {
 fn roundtrip_fragment() {
     let payload = b"abc";
     let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
-        .unwrap()
         .fragment(100, 5000)
         .build()
         .unwrap();
@@ -177,7 +170,6 @@ fn roundtrip_fragment() {
 fn roundtrip_crc_values_nonzero() {
     let payload = b"test payload";
     let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
-        .unwrap()
         .build()
         .unwrap();
     let encoded = bundle.encode().unwrap();
@@ -251,7 +243,6 @@ fn decode_garbage() {
 #[test]
 fn validate_wrong_version() {
     let mut bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, b"", MemoryRetention::new())
-        .unwrap()
         .build()
         .unwrap();
     bundle.primary_mut().version = 6;
@@ -261,7 +252,6 @@ fn validate_wrong_version() {
 #[test]
 fn validate_fragment_flag_mismatch() {
     let mut bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, b"", MemoryRetention::new())
-        .unwrap()
         .build()
         .unwrap();
     bundle.primary_mut().flags = BundleFlags::from_bits(0x01);
@@ -276,7 +266,6 @@ fn validate_duplicate_block_numbers() {
         count: 0,
     };
     let mut bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, b"", MemoryRetention::new())
-        .unwrap()
         .build()
         .unwrap();
     bundle.blocks_mut().push(CanonicalBlock::from_ext(
@@ -345,7 +334,6 @@ fn crc_incremental_matches_oneshot() {
 fn crc_verify_detects_corruption() {
     let payload = b"verify me";
     let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
-        .unwrap()
         .build()
         .unwrap();
     let encoded = bundle.encode().unwrap();

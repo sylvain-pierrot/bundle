@@ -324,7 +324,6 @@ fn stream_forwarding_pattern() {
 fn memory_retention_roundtrip() {
     let payload = b"memory retention test";
     let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
-        .unwrap()
         .build()
         .unwrap();
     let encoded = bundle.encode().unwrap();
@@ -333,11 +332,7 @@ fn memory_retention_roundtrip() {
         .unwrap();
 
     let mut buf = Vec::new();
-    decoded
-        .payload_reader()
-        .unwrap()
-        .read_to_end(&mut buf)
-        .unwrap();
+    decoded.payload(&mut buf).unwrap();
     assert_eq!(buf, payload);
 
     let reencoded = decoded.encode().unwrap();
@@ -348,15 +343,10 @@ fn memory_retention_roundtrip() {
 fn retention_builder_payload_reader() {
     let payload = b"builder stores in retention";
     let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
-        .unwrap()
         .build()
         .unwrap();
     let mut buf = Vec::new();
-    bundle
-        .payload_reader()
-        .unwrap()
-        .read_to_end(&mut buf)
-        .unwrap();
+    bundle.payload(&mut buf).unwrap();
     assert_eq!(buf, payload);
 }
 
@@ -434,7 +424,6 @@ fn disk_retention_roundtrip() {
         payload,
         MemoryRetention::new(),
     )
-    .unwrap()
     .build()
     .unwrap();
 
@@ -445,11 +434,7 @@ fn disk_retention_roundtrip() {
         .unwrap();
 
     let mut buf = Vec::new();
-    decoded
-        .payload_reader()
-        .unwrap()
-        .read_to_end(&mut buf)
-        .unwrap();
+    decoded.payload(&mut buf).unwrap();
     assert_eq!(buf, payload);
 
     let reencoded = decoded.encode().unwrap();
@@ -465,7 +450,6 @@ fn disk_retention_from_stream() {
     let payload = b"streaming to disk";
 
     let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
-        .unwrap()
         .build()
         .unwrap();
     let encoded = bundle.encode().unwrap();
@@ -476,11 +460,7 @@ fn disk_retention_from_stream() {
     let decoded = BundleReader::new().read_from(file, disk).unwrap();
 
     let mut buf = Vec::new();
-    decoded
-        .payload_reader()
-        .unwrap()
-        .read_to_end(&mut buf)
-        .unwrap();
+    decoded.payload(&mut buf).unwrap();
     assert_eq!(buf, payload);
 
     std::fs::remove_file(bundle_path).unwrap();
@@ -514,7 +494,6 @@ fn streaming_crc_matches_inmemory_crc() {
     writer.finish().unwrap();
 
     let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
-        .unwrap()
         .build()
         .unwrap();
     let inmem_buf = bundle.encode().unwrap();

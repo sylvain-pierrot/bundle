@@ -26,19 +26,6 @@ pub struct Bundle<S> {
     retention: S,
 }
 
-impl<S> Deref for Bundle<S> {
-    type Target = Bpv7Bundle;
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
-impl<S> DerefMut for Bundle<S> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner
-    }
-}
-
 impl<S> Bundle<S> {
     pub(crate) fn from_parts(
         primary: PrimaryBlock,
@@ -65,12 +52,27 @@ impl<S> Bundle<S> {
 }
 
 impl<S: Retention> Bundle<S> {
-    pub fn payload_reader(&self) -> Result<S::Reader<'_>, IoError> {
+    /// Stream the payload to a destination.
+    ///
+    /// Reads from retention in 64KB chunks and writes to `dest`.
+    /// Returns the number of bytes written.
+    pub fn payload(&self, dest: &mut impl Write) -> Result<u64, IoError> {
         let (offset, len) = self
             .payload_block()
             .and_then(|b| b.retained_range())
             .ok_or(IoError::UnexpectedEof)?;
-        self.retention.reader(offset, len)
+        let mut reader = self.retention.reader(offset, len)?;
+        let mut buf = [0u8; 65536];
+        let mut written = 0u64;
+        loop {
+            let n = reader.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            dest.write_all(&buf[..n])?;
+            written += n as u64;
+        }
+        Ok(written)
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, Error> {
@@ -113,12 +115,27 @@ impl<S: Retention> Bundle<S> {
 
 #[cfg(feature = "async")]
 impl<S: AsyncRetention> Bundle<S> {
-    pub async fn async_payload_reader(&self) -> Result<S::Reader<'_>, IoError> {
+    /// Stream the payload to a destination (async).
+    ///
+    /// Reads from retention in 64KB chunks and writes to `dest`.
+    /// Returns the number of bytes written.
+    pub async fn payload(&self, dest: &mut impl Write) -> Result<u64, IoError> {
         let (offset, len) = self
             .payload_block()
             .and_then(|b| b.retained_range())
             .ok_or(IoError::UnexpectedEof)?;
-        self.retention.reader(offset, len).await
+        let mut reader = self.retention.reader(offset, len).await?;
+        let mut buf = [0u8; 65536];
+        let mut written = 0u64;
+        loop {
+            let n = reader.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            dest.write_all(&buf[..n])?;
+            written += n as u64;
+        }
+        Ok(written)
     }
 
     pub async fn async_encode_to<W: AsyncWrite + Unpin>(&self, writer: W) -> Result<(), Error> {
@@ -147,5 +164,18 @@ impl<S: AsyncRetention> Bundle<S> {
 
         w.finish().await?;
         Ok(())
+    }
+}
+
+impl<S> Deref for Bundle<S> {
+    type Target = Bpv7Bundle;
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<S> DerefMut for Bundle<S> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
     }
 }

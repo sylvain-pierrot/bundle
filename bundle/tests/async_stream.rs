@@ -5,10 +5,8 @@ use bundle::{
     AsyncRetention, BundleAsyncReader, BundleAsyncWriter, BundleBuilder, BundleReader,
     MemoryRetention, Retention,
 };
-use bundle_bpv7::{
-    BlockFlags, BundleFlags, CanonicalBlock, Crc, CreationTimestamp, Eid, HopCount, PrimaryBlock,
-};
-use bundle_io::{Error as IoError, Read, Write};
+use bundle_bpv7::{BlockFlags, BundleFlags, Crc, CreationTimestamp, Eid, HopCount, PrimaryBlock};
+use bundle_io::{Error as IoError, Write};
 
 /// Test-only async wrapper around MemoryRetention.
 struct AsyncMemoryRetention(MemoryRetention);
@@ -72,7 +70,6 @@ async fn async_reader_roundtrip() {
         payload,
         MemoryRetention::new(),
     )
-    .unwrap()
     .build()
     .unwrap();
 
@@ -91,11 +88,7 @@ async fn async_reader_roundtrip() {
     assert_eq!(decoded.payload_len(), payload.len() as u64);
 
     let mut buf = Vec::new();
-    decoded
-        .payload_reader()
-        .unwrap()
-        .read_to_end(&mut buf)
-        .unwrap();
+    decoded.payload(&mut buf).unwrap();
     assert_eq!(buf, payload);
 }
 
@@ -138,11 +131,7 @@ async fn async_writer_roundtrip() {
     assert_eq!(decoded.primary().dest_eid, primary.dest_eid);
 
     let mut read_payload = Vec::new();
-    decoded
-        .payload_reader()
-        .unwrap()
-        .read_to_end(&mut read_payload)
-        .unwrap();
+    decoded.payload(&mut read_payload).unwrap();
     assert_eq!(read_payload, payload);
 }
 
@@ -165,16 +154,14 @@ async fn async_full_roundtrip() {
         payload,
         MemoryRetention::new(),
     )
-    .unwrap()
-    .extension(CanonicalBlock::from_ext(
-        2,
-        BlockFlags::from_bits(0),
-        Crc::None,
-        &HopCount {
+    .extension(
+        HopCount {
             limit: 30,
             count: 1,
         },
-    ))
+        BlockFlags::from_bits(0),
+        Crc::None,
+    )
     .build()
     .unwrap();
 
@@ -203,11 +190,7 @@ async fn async_full_roundtrip() {
     assert_eq!(hop.count, 1);
 
     let mut buf = Vec::new();
-    decoded
-        .payload_reader()
-        .unwrap()
-        .read_to_end(&mut buf)
-        .unwrap();
+    decoded.payload(&mut buf).unwrap();
     assert_eq!(buf, payload);
 
     // Re-encode sync should match

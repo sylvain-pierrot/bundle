@@ -3,9 +3,7 @@ use bundle_bpv7::filter::builtin::{
     DestinationFilter, HopCountFilter, HopCountIncrementMutator, MaxPayloadSizeFilter,
     PreviousNodeMutator,
 };
-use bundle_bpv7::{BlockFlags, CanonicalBlock, Crc, Eid, Error, HopCount, PreviousNode};
-use bundle_io::Read;
-
+use bundle_bpv7::{BlockFlags, Crc, Eid, Error, HopCount, PreviousNode};
 fn local_eid() -> Eid {
     Eid::Ipn {
         allocator_id: 0,
@@ -22,18 +20,17 @@ fn remote_eid() -> Eid {
     }
 }
 
-fn encode_bundle(payload: &[u8], extensions: Vec<CanonicalBlock>) -> Vec<u8> {
-    let mut builder = BundleBuilder::new(
+fn build_bundle(payload: &[u8]) -> BundleBuilder<MemoryRetention> {
+    BundleBuilder::new(
         local_eid(),
         remote_eid(),
         1000,
         payload,
         MemoryRetention::new(),
     )
-    .unwrap();
-    for ext in extensions {
-        builder = builder.extension(ext);
-    }
+}
+
+fn encode(builder: BundleBuilder<MemoryRetention>) -> Vec<u8> {
     let bundle = builder.build().unwrap();
     let mut buf = Vec::new();
     bundle.encode_to(&mut buf).unwrap();
@@ -44,7 +41,7 @@ fn encode_bundle(payload: &[u8], extensions: Vec<CanonicalBlock>) -> Vec<u8> {
 
 #[test]
 fn no_filters_passthrough() {
-    let encoded = encode_bundle(b"hello", vec![]);
+    let encoded = encode(build_bundle(b"hello"));
     let reader = BundleReader::new();
     let bundle = reader
         .read_from(encoded.as_slice(), MemoryRetention::new())
@@ -54,7 +51,7 @@ fn no_filters_passthrough() {
 
 #[test]
 fn max_payload_size_accepts() {
-    let encoded = encode_bundle(b"small", vec![]);
+    let encoded = encode(build_bundle(b"small"));
     let reader = BundleReader::new().filter(MaxPayloadSizeFilter::new(1000));
     let bundle = reader
         .read_from(encoded.as_slice(), MemoryRetention::new())
@@ -64,7 +61,7 @@ fn max_payload_size_accepts() {
 
 #[test]
 fn max_payload_size_rejects() {
-    let encoded = encode_bundle(b"too large payload", vec![]);
+    let encoded = encode(build_bundle(b"too large payload"));
     let reader = BundleReader::new().filter(MaxPayloadSizeFilter::new(5));
     let result = reader.read_from(encoded.as_slice(), MemoryRetention::new());
     assert!(result.is_err());
@@ -73,7 +70,7 @@ fn max_payload_size_rejects() {
 
 #[test]
 fn rejected_bundle_zero_retention_io() {
-    let encoded = encode_bundle(b"should not hit retention", vec![]);
+    let encoded = encode(build_bundle(b"should not hit retention"));
     let reader = BundleReader::new().filter(MaxPayloadSizeFilter::new(1));
     let retention = MemoryRetention::new();
     let result = reader.read_from(encoded.as_slice(), retention);
@@ -83,12 +80,14 @@ fn rejected_bundle_zero_retention_io() {
 
 #[test]
 fn hop_count_filter_accepts_valid() {
-    let hc = HopCount {
-        limit: 30,
-        count: 5,
-    };
-    let ext = CanonicalBlock::from_ext(2, BlockFlags::from_bits(0), Crc::None, &hc);
-    let encoded = encode_bundle(b"valid hop count", vec![ext]);
+    let encoded = encode(build_bundle(b"valid hop count").extension(
+        HopCount {
+            limit: 30,
+            count: 5,
+        },
+        BlockFlags::from_bits(0),
+        Crc::None,
+    ));
 
     let reader = BundleReader::new().filter(HopCountFilter);
     let bundle = reader
@@ -99,12 +98,14 @@ fn hop_count_filter_accepts_valid() {
 
 #[test]
 fn hop_count_filter_rejects_exceeded() {
-    let hc = HopCount {
-        limit: 10,
-        count: 11,
-    };
-    let ext = CanonicalBlock::from_ext(2, BlockFlags::from_bits(0), Crc::None, &hc);
-    let encoded = encode_bundle(b"expired", vec![ext]);
+    let encoded = encode(build_bundle(b"expired").extension(
+        HopCount {
+            limit: 10,
+            count: 11,
+        },
+        BlockFlags::from_bits(0),
+        Crc::None,
+    ));
 
     let reader = BundleReader::new().filter(HopCountFilter);
     let result = reader.read_from(encoded.as_slice(), MemoryRetention::new());
@@ -113,7 +114,7 @@ fn hop_count_filter_rejects_exceeded() {
 
 #[test]
 fn destination_filter_accepts() {
-    let encoded = encode_bundle(b"for local", vec![]);
+    let encoded = encode(build_bundle(b"for local"));
     let reader = BundleReader::new().filter(DestinationFilter::new(vec![local_eid()]));
     let bundle = reader
         .read_from(encoded.as_slice(), MemoryRetention::new())
@@ -123,7 +124,7 @@ fn destination_filter_accepts() {
 
 #[test]
 fn destination_filter_rejects() {
-    let encoded = encode_bundle(b"not for you", vec![]);
+    let encoded = encode(build_bundle(b"not for you"));
     let reader = BundleReader::new().filter(DestinationFilter::new(vec![remote_eid()]));
     let result = reader.read_from(encoded.as_slice(), MemoryRetention::new());
     assert!(matches!(result.unwrap_err(), Error::FilterRejected(_)));
@@ -131,7 +132,7 @@ fn destination_filter_rejects() {
 
 #[test]
 fn multiple_filters_first_rejection_wins() {
-    let encoded = encode_bundle(b"big payload for wrong dest", vec![]);
+    let encoded = encode(build_bundle(b"big payload for wrong dest"));
     let reader = BundleReader::new()
         .filter(MaxPayloadSizeFilter::new(5))
         .filter(DestinationFilter::new(vec![remote_eid()]));
@@ -147,12 +148,14 @@ fn multiple_filters_first_rejection_wins() {
 
 #[test]
 fn hop_count_increment_mutator() {
-    let hc = HopCount {
-        limit: 30,
-        count: 5,
-    };
-    let ext = CanonicalBlock::from_ext(2, BlockFlags::from_bits(0), Crc::None, &hc);
-    let encoded = encode_bundle(b"hop test", vec![ext]);
+    let encoded = encode(build_bundle(b"hop test").extension(
+        HopCount {
+            limit: 30,
+            count: 5,
+        },
+        BlockFlags::from_bits(0),
+        Crc::None,
+    ));
 
     let reader = BundleReader::new().mutator(HopCountIncrementMutator::new(30));
     let bundle = reader
@@ -171,7 +174,7 @@ fn hop_count_increment_mutator() {
 
 #[test]
 fn hop_count_increment_adds_block_if_missing() {
-    let encoded = encode_bundle(b"no hop count", vec![]);
+    let encoded = encode(build_bundle(b"no hop count"));
 
     let reader = BundleReader::new().mutator(HopCountIncrementMutator::new(25));
     let bundle = reader
@@ -190,7 +193,7 @@ fn hop_count_increment_adds_block_if_missing() {
 
 #[test]
 fn previous_node_mutator() {
-    let encoded = encode_bundle(b"prev node test", vec![]);
+    let encoded = encode(build_bundle(b"prev node test"));
     let node = Eid::Ipn {
         allocator_id: 0,
         node_number: 42,
@@ -220,8 +223,11 @@ fn previous_node_mutator_replaces_existing() {
             service_number: 0,
         },
     };
-    let ext = CanonicalBlock::from_ext(2, BlockFlags::from_bits(0), Crc::None, &old_pn);
-    let encoded = encode_bundle(b"replace prev", vec![ext]);
+    let encoded = encode(build_bundle(b"replace prev").extension(
+        old_pn,
+        BlockFlags::from_bits(0),
+        Crc::None,
+    ));
 
     let new_node = Eid::Ipn {
         allocator_id: 0,
@@ -246,12 +252,14 @@ fn previous_node_mutator_replaces_existing() {
 
 #[test]
 fn filter_then_mutate() {
-    let hc = HopCount {
-        limit: 30,
-        count: 5,
-    };
-    let ext = CanonicalBlock::from_ext(2, BlockFlags::from_bits(0), Crc::None, &hc);
-    let encoded = encode_bundle(b"filter and mutate", vec![ext]);
+    let encoded = encode(build_bundle(b"filter and mutate").extension(
+        HopCount {
+            limit: 30,
+            count: 5,
+        },
+        BlockFlags::from_bits(0),
+        Crc::None,
+    ));
 
     let reader = BundleReader::new()
         .filter(HopCountFilter)
@@ -283,19 +291,17 @@ fn filter_then_mutate() {
 
     // Payload intact
     let mut buf = Vec::new();
-    bundle
-        .payload_reader()
-        .unwrap()
-        .read_to_end(&mut buf)
-        .unwrap();
+    bundle.payload(&mut buf).unwrap();
     assert_eq!(buf, b"filter and mutate");
 }
 
 #[test]
 fn filter_rejects_before_mutate() {
-    let hc = HopCount { limit: 5, count: 6 };
-    let ext = CanonicalBlock::from_ext(2, BlockFlags::from_bits(0), Crc::None, &hc);
-    let encoded = encode_bundle(b"rejected", vec![ext]);
+    let encoded = encode(build_bundle(b"rejected").extension(
+        HopCount { limit: 5, count: 6 },
+        BlockFlags::from_bits(0),
+        Crc::None,
+    ));
 
     let reader = BundleReader::new()
         .filter(HopCountFilter)
@@ -309,12 +315,14 @@ fn filter_rejects_before_mutate() {
 
 #[test]
 fn filtered_mutated_bundle_roundtrip() {
-    let hc = HopCount {
-        limit: 30,
-        count: 5,
-    };
-    let ext = CanonicalBlock::from_ext(2, BlockFlags::from_bits(0), Crc::None, &hc);
-    let encoded = encode_bundle(b"roundtrip", vec![ext]);
+    let encoded = encode(build_bundle(b"roundtrip").extension(
+        HopCount {
+            limit: 30,
+            count: 5,
+        },
+        BlockFlags::from_bits(0),
+        Crc::None,
+    ));
 
     let reader = BundleReader::new()
         .filter(HopCountFilter)
@@ -352,10 +360,107 @@ fn filtered_mutated_bundle_roundtrip() {
     assert_eq!(pn.node_id, local_eid());
 
     let mut buf = Vec::new();
-    bundle2
-        .payload_reader()
-        .unwrap()
-        .read_to_end(&mut buf)
-        .unwrap();
+    bundle2.payload(&mut buf).unwrap();
     assert_eq!(buf, b"roundtrip");
+}
+
+// -- Retention holds the mutated version -------------------------------------
+
+#[test]
+fn retention_holds_mutated_hop_count() {
+    let encoded = encode(build_bundle(b"retention test").extension(
+        HopCount {
+            limit: 30,
+            count: 0,
+        },
+        BlockFlags::from_bits(0),
+        Crc::None,
+    ));
+
+    let bundle = BundleReader::new()
+        .mutator(HopCountIncrementMutator::new(30))
+        .read_from(encoded.as_slice(), MemoryRetention::new())
+        .unwrap();
+
+    // In-memory struct has mutated value.
+    let hc = bundle
+        .extensions()
+        .find_map(|b| b.parse_ext::<HopCount>().ok())
+        .unwrap();
+    assert_eq!(hc.count, 1);
+
+    // Re-encode from retention (no mutators) and verify the stored
+    // bytes already contain the mutated hop count.
+    let mut wire = Vec::new();
+    bundle.encode_to(&mut wire).unwrap();
+
+    let re_decoded = BundleReader::new()
+        .read_from(wire.as_slice(), MemoryRetention::new())
+        .unwrap();
+
+    let hc2 = re_decoded
+        .extensions()
+        .find_map(|b| b.parse_ext::<HopCount>().ok())
+        .unwrap();
+    assert_eq!(hc2.count, 1, "retention must hold the mutated version");
+}
+
+#[test]
+fn retention_holds_mutated_previous_node() {
+    let encoded = encode(build_bundle(b"prev node retention"));
+
+    let node = Eid::Ipn {
+        allocator_id: 0,
+        node_number: 42,
+        service_number: 0,
+    };
+    let bundle = BundleReader::new()
+        .mutator(PreviousNodeMutator::new(node.clone()))
+        .read_from(encoded.as_slice(), MemoryRetention::new())
+        .unwrap();
+
+    // Re-encode from retention (no mutators).
+    let mut wire = Vec::new();
+    bundle.encode_to(&mut wire).unwrap();
+
+    let re_decoded = BundleReader::new()
+        .read_from(wire.as_slice(), MemoryRetention::new())
+        .unwrap();
+
+    let pn = re_decoded
+        .extensions()
+        .find_map(|b| b.parse_ext::<PreviousNode>().ok())
+        .unwrap();
+    assert_eq!(pn.node_id, node, "retention must hold the mutated version");
+}
+
+#[test]
+fn no_mutation_preserves_original_bytes() {
+    let encoded = encode(build_bundle(b"no mutation").extension(
+        HopCount {
+            limit: 30,
+            count: 5,
+        },
+        BlockFlags::from_bits(0),
+        Crc::None,
+    ));
+
+    // Only a filter, no mutators.
+    let bundle = BundleReader::new()
+        .filter(HopCountFilter)
+        .read_from(encoded.as_slice(), MemoryRetention::new())
+        .unwrap();
+
+    let mut wire = Vec::new();
+    bundle.encode_to(&mut wire).unwrap();
+
+    let re_decoded = BundleReader::new()
+        .read_from(wire.as_slice(), MemoryRetention::new())
+        .unwrap();
+
+    let hc = re_decoded
+        .extensions()
+        .find_map(|b| b.parse_ext::<HopCount>().ok())
+        .unwrap();
+    assert_eq!(hc.count, 5, "original value preserved when no mutation");
 }
