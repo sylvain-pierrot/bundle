@@ -1,8 +1,8 @@
 use bundle::{BlockEvent, BundleBuilder, BundleReader, BundleWriter, MemoryRetention, ReadResult};
+use bundle_bpv7::filter::builtin::HopCountIncrementMutator;
 use bundle_bpv7::{
     BlockFlags, BundleFlags, CanonicalBlock, Crc, CreationTimestamp, Eid, HopCount, PrimaryBlock,
 };
-use bundle_io::Read;
 
 #[test]
 fn stream_roundtrip_minimal() {
@@ -32,25 +32,22 @@ fn stream_roundtrip_minimal() {
     let reader = BundleReader::new();
     let mut session = reader.open(buf.as_slice(), MemoryRetention::new());
 
-    let mut read_payload = Vec::new();
     while let Some(event) = session.next_block().unwrap() {
         match event {
             BlockEvent::Extension(_) => {}
             BlockEvent::Payload { len } => {
                 assert_eq!(len, payload.len() as u64);
-                session
-                    .payload_reader()
-                    .unwrap()
-                    .read_to_end(&mut read_payload)
-                    .unwrap();
+                session.walk(len).unwrap();
             }
         }
     }
-    assert_eq!(read_payload, payload);
     assert_eq!(session.primary().unwrap().version, 7);
     let ReadResult::Accepted(bundle) = session.into_bundle().unwrap() else {
         panic!("expected accepted");
     };
+    let mut read_payload = Vec::new();
+    bundle.payload(&mut read_payload).unwrap();
+    assert_eq!(read_payload, payload);
     assert!(bundle.payload_crc().is_none());
 }
 
@@ -85,23 +82,18 @@ fn stream_roundtrip_with_crc() {
     writer.finish().unwrap();
 
     let mut session = BundleReader::new().open(buf.as_slice(), MemoryRetention::new());
-    let mut read_payload = Vec::new();
     while let Some(event) = session.next_block().unwrap() {
         match event {
             BlockEvent::Extension(_) => {}
-            BlockEvent::Payload { .. } => {
-                session
-                    .payload_reader()
-                    .unwrap()
-                    .read_to_end(&mut read_payload)
-                    .unwrap();
-            }
+            BlockEvent::Payload { len } => session.walk(len).unwrap(),
         }
     }
-    assert_eq!(read_payload, payload);
     let ReadResult::Accepted(bundle) = session.into_bundle().unwrap() else {
         panic!("expected accepted");
     };
+    let mut read_payload = Vec::new();
+    bundle.payload(&mut read_payload).unwrap();
+    assert_eq!(read_payload, payload);
     assert_eq!(bundle.payload_crc().crc_type(), 1);
 }
 
@@ -256,76 +248,35 @@ fn stream_forwarding_pattern() {
     w.end_payload().unwrap();
     w.finish().unwrap();
 
-    let mut session = BundleReader::new().open(original.as_slice(), MemoryRetention::new());
+    // Receive
+    let ReadResult::Accepted(bundle) = BundleReader::new()
+        .read_from(original.as_slice(), MemoryRetention::new())
+        .unwrap()
+    else {
+        panic!("expected accepted");
+    };
 
+    // Forward with hop count mutator
     let mut forwarded = Vec::new();
-    let mut writer = BundleWriter::new().open(&mut forwarded);
-    let mut wrote_primary = false;
+    let writer = BundleWriter::new().mutator(HopCountIncrementMutator::new(30));
+    writer.write_to(&bundle, &mut forwarded).unwrap();
 
-    while let Some(event) = session.next_block().unwrap() {
-        if !wrote_primary {
-            writer.write_primary(session.primary().unwrap()).unwrap();
-            let hc = HopCount {
-                limit: 30,
-                count: 1,
-            };
-            writer
-                .write_extension(&CanonicalBlock::from_ext(
-                    2,
-                    BlockFlags::from_bits(0),
-                    Crc::None,
-                    &hc,
-                ))
-                .unwrap();
-            wrote_primary = true;
-        }
-        match event {
-            BlockEvent::Extension(idx) => {
-                writer.write_extension(&session.blocks()[idx]).unwrap();
-            }
-            BlockEvent::Payload { len } => {
-                writer
-                    .begin_payload(BlockFlags::from_bits(0), Crc::None, len)
-                    .unwrap();
-                let mut buf = [0u8; 8192];
-                {
-                    let mut pr = session.payload_reader().unwrap();
-                    loop {
-                        let n = pr.read(&mut buf).unwrap();
-                        if n == 0 {
-                            break;
-                        }
-                        writer.write_payload_data(&buf[..n]).unwrap();
-                    }
-                }
-                writer.end_payload().unwrap();
-            }
-        }
-    }
-    writer.finish().unwrap();
-
-    let mut session2 = BundleReader::new().open(forwarded.as_slice(), MemoryRetention::new());
-    let mut ext_count = 0;
+    // Verify forwarded bundle
+    let ReadResult::Accepted(fwd) = BundleReader::new()
+        .read_from(forwarded.as_slice(), MemoryRetention::new())
+        .unwrap()
+    else {
+        panic!("expected accepted");
+    };
+    let hop = fwd
+        .extensions()
+        .find_map(|b| b.parse_ext::<HopCount>().ok())
+        .unwrap();
+    assert_eq!(hop.count, 1);
     let mut fwd_payload = Vec::new();
-    while let Some(event) = session2.next_block().unwrap() {
-        match event {
-            BlockEvent::Extension(idx) => {
-                let hop = session2.blocks()[idx].parse_ext::<HopCount>().unwrap();
-                assert_eq!(hop.count, 1);
-                ext_count += 1;
-            }
-            BlockEvent::Payload { .. } => {
-                session2
-                    .payload_reader()
-                    .unwrap()
-                    .read_to_end(&mut fwd_payload)
-                    .unwrap();
-            }
-        }
-    }
-    assert_eq!(ext_count, 1);
+    fwd.payload(&mut fwd_payload).unwrap();
     assert_eq!(fwd_payload, payload);
-    assert_eq!(session2.primary().unwrap().dest_eid, primary.dest_eid);
+    assert_eq!(fwd.primary().dest_eid, primary.dest_eid);
 }
 
 // -- Retention tests ---------------------------------------------------------
@@ -334,6 +285,7 @@ fn stream_forwarding_pattern() {
 fn memory_retention_roundtrip() {
     let payload = b"memory retention test";
     let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
+        .unwrap()
         .build()
         .unwrap();
     let mut encoded = Vec::new();
@@ -355,9 +307,10 @@ fn memory_retention_roundtrip() {
 }
 
 #[test]
-fn retention_builder_payload_reader() {
+fn retention_builder_payload() {
     let payload = b"builder stores in retention";
     let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
+        .unwrap()
         .build()
         .unwrap();
     let mut buf = Vec::new();
@@ -441,6 +394,7 @@ fn disk_retention_roundtrip() {
         payload,
         MemoryRetention::new(),
     )
+    .unwrap()
     .build()
     .unwrap();
 
@@ -472,6 +426,7 @@ fn disk_retention_from_stream() {
     let payload = b"streaming to disk";
 
     let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
+        .unwrap()
         .build()
         .unwrap();
     let mut encoded = Vec::new();
@@ -519,6 +474,7 @@ fn streaming_crc_matches_inmemory_crc() {
     writer.finish().unwrap();
 
     let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
+        .unwrap()
         .build()
         .unwrap();
     let mut inmem_buf = Vec::new();

@@ -10,8 +10,7 @@ pub use bundle::Bundle;
 pub use bundle::builder::BundleBuilder;
 pub use filter::FilterChain;
 pub use io::{
-    BlockEvent, BundleReader, BundleWriter, OpenBundleReader, OpenBundleWriter, PayloadReader,
-    ReadResult,
+    BlockEvent, BundleReader, BundleWriter, OpenBundleReader, OpenBundleWriter, ReadResult,
 };
 pub use retention::{MemoryRetention, Retention};
 

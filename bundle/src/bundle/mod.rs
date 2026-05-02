@@ -37,14 +37,6 @@ impl<S> Bundle<S> {
         }
     }
 
-    #[cfg(feature = "async")]
-    pub(crate) fn swap_retention<T>(self, retention: T) -> Bundle<T> {
-        Bundle {
-            inner: self.inner,
-            retention,
-        }
-    }
-
     pub fn retention(&self) -> &S {
         &self.retention
     }
@@ -85,7 +77,7 @@ impl<S: AsyncRetention> Bundle<S> {
     ///
     /// Reads from retention in 64KB chunks and writes to `dest`.
     /// Returns the number of bytes written.
-    pub async fn payload(&self, dest: &mut impl Write) -> Result<u64, IoError> {
+    pub async fn async_payload(&self, dest: &mut impl Write) -> Result<u64, IoError> {
         let (offset, len) = self
             .payload_block()
             .and_then(|b| b.retained_range())
@@ -104,7 +96,7 @@ impl<S: AsyncRetention> Bundle<S> {
         Ok(written)
     }
 
-    pub async fn encode_to<W: AsyncWrite + Unpin>(&self, writer: W) -> Result<(), Error> {
+    pub async fn async_encode_to<W: AsyncWrite + Unpin>(&self, writer: W) -> Result<(), Error> {
         self.validate()?;
         BundleAsyncWriter::new().write_to(self, writer).await
     }

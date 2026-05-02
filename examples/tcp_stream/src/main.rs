@@ -45,6 +45,7 @@ fn main() {
 
     let retention = MemoryRetention::new();
     let bundle = BundleBuilder::new(dest, src, 3_600_000, b"hello over TCP", retention)
+        .unwrap()
         .build()
         .unwrap();
 

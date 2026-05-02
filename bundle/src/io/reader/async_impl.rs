@@ -1,4 +1,4 @@
-//! Async bundle reader with optional ingress filter pipeline.
+//! Async bundle reader.
 
 use std::io;
 use std::pin::Pin;
@@ -10,9 +10,10 @@ use bundle_cbor::{Encoder, StreamDecoder, ToCbor};
 use bundle_io::Error as IoError;
 use futures_io::AsyncRead;
 
-use super::reader::{BlockEvent, OpenBundleReader, ReadResult};
+use super::open::OpenBundleReader;
+use super::{BlockEvent, ReadResult};
 use crate::bundle::Bundle;
-use crate::filter::{BundleFilter, BundleMetadata, BundleMutator, FilterChain, FilterRejection};
+use crate::filter::{BundleFilter, BundleMetadata, BundleMutator, FilterChain};
 use crate::retention::{AsyncRetention, NoopRetention};
 
 const HEADER_BUF_SIZE: usize = 65536;
@@ -90,143 +91,108 @@ impl BundleAsyncReader {
             return Err(Error::EmptyRetention);
         }
 
-        // Phase 2: run filters/mutators if configured, write to retention.
-        if !self.chain.is_empty() {
-            let parsed = parse_metadata(&header_buf)?;
-            let mut primary = parsed.primary;
-            let mut extensions = parsed.extensions;
-            let mut payload_offset = parsed.payload_data_offset as u64;
+        // Phase 2: parse headers, run filters/mutators, write to retention.
+        let parsed = parse_metadata(&header_buf)?;
+        let mut primary = parsed.primary;
+        let mut extensions = parsed.extensions;
+        let mut payload_offset = parsed.payload_data_offset as u64;
+        let mut mutated = false;
 
+        if !self.chain.is_empty() {
             let meta = BundleMetadata {
                 primary: &primary,
                 extensions: &extensions,
                 payload_len: parsed.payload_len,
             };
             if let Err(rejection) = self.chain.run_filters(&meta) {
+                let _ = retention.discard().await;
                 return Ok(ReadResult::Rejected(rejection));
             }
 
-            let mutated = self.chain.run_mutators(&mut primary, &mut extensions);
+            mutated = self.chain.run_mutators(&mut primary, &mut extensions);
+        }
 
-            if mutated {
-                // Re-encode mutated headers so retention holds the mutated version.
-                let mut enc = Encoder::with_capacity(256);
-                enc.write_indefinite_array();
-                primary.encode(&mut enc);
-                for ext in &extensions {
-                    ext.encode(&mut enc);
-                }
-                let has_crc = parsed.payload_crc_type != 0;
-                enc.write_array(if has_crc { 6 } else { 5 });
-                enc.write_uint(1);
-                enc.write_uint(1);
-                enc.write_uint(parsed.payload_flags);
-                enc.write_uint(parsed.payload_crc_type);
-                enc.write_bstr_header(parsed.payload_len);
-
-                payload_offset = enc.position() as u64;
-
-                retention
-                    .write_all(enc.as_bytes())
-                    .await
-                    .map_err(Error::from)?;
-                retention
-                    .write_all(&header_buf[parsed.payload_data_offset..])
-                    .await
-                    .map_err(Error::from)?;
-            } else {
-                retention
-                    .write_all(&header_buf)
-                    .await
-                    .map_err(Error::from)?;
+        if mutated {
+            // Re-encode mutated headers so retention holds the mutated version.
+            let mut enc = Encoder::with_capacity(256);
+            enc.write_indefinite_array();
+            primary.encode(&mut enc);
+            for ext in &extensions {
+                ext.encode(&mut enc);
             }
-            for buf in &overflow {
-                retention.write_all(buf).await.map_err(Error::from)?;
-            }
-            drop(overflow);
+            let has_crc = parsed.payload_crc_type != 0;
+            enc.write_array(if has_crc { 6 } else { 5 });
+            enc.write_uint(1);
+            enc.write_uint(1);
+            enc.write_uint(parsed.payload_flags);
+            enc.write_uint(parsed.payload_crc_type);
+            enc.write_bstr_header(parsed.payload_len);
 
-            // Stream remaining source bytes to retention.
-            let mut retention_total = total;
-            if mutated {
-                retention_total =
-                    retention_total - parsed.payload_data_offset as u64 + payload_offset;
-            }
-            loop {
-                let n = poll_read(&mut source, &mut chunk).await?;
-                if n == 0 {
-                    break;
-                }
-                retention
-                    .write_all(&chunk[..n])
-                    .await
-                    .map_err(Error::from)?;
-                retention_total += n as u64;
-            }
+            payload_offset = enc.position() as u64;
 
-            retention.flush().await.map_err(Error::from)?;
-
-            // Build Bundle<S> directly from parsed structs.
-            let payload_crc = if parsed.payload_crc_type != 0 {
-                let tail_start = payload_offset + parsed.payload_len;
-                let tail_len = retention_total - tail_start;
-                let tail = retention.reader(tail_start, tail_len).await?;
-                let mut tail_dec = StreamDecoder::new(tail);
-                Crc::decode_stream(&mut tail_dec, parsed.payload_crc_type)?
-            } else {
-                Crc::None
-            };
-
-            extensions.push(CanonicalBlock {
-                block_type: 1,
-                block_number: 1,
-                flags: BlockFlags::from_bits(parsed.payload_flags),
-                crc: payload_crc,
-                data: BlockData::Retained {
-                    offset: payload_offset,
-                    len: parsed.payload_len,
-                },
-            });
-
-            Ok(ReadResult::Accepted(Bundle::from_parts(
-                primary, extensions, retention,
-            )))
+            retention
+                .write_all(enc.as_bytes())
+                .await
+                .map_err(Error::from)?;
+            retention
+                .write_all(&header_buf[parsed.payload_data_offset..])
+                .await
+                .map_err(Error::from)?;
         } else {
-            // No filters/mutators: write everything to retention, parse once.
             retention
                 .write_all(&header_buf)
                 .await
                 .map_err(Error::from)?;
-            for buf in &overflow {
-                retention.write_all(buf).await.map_err(Error::from)?;
-            }
-            drop(overflow);
-
-            loop {
-                let n = poll_read(&mut source, &mut chunk).await?;
-                if n == 0 {
-                    break;
-                }
-                retention
-                    .write_all(&chunk[..n])
-                    .await
-                    .map_err(Error::from)?;
-            }
-
-            retention.flush().await.map_err(Error::from)?;
-
-            // Parse from header_buf to build Bundle<S>.
-            let empty = Arc::new(FilterChain::new());
-            match OpenBundleReader::open(&header_buf[..], NoopRetention, empty).into_bundle() {
-                Ok(ReadResult::Accepted(bundle)) => {
-                    Ok(ReadResult::Accepted(bundle.swap_retention(retention)))
-                }
-                Err(e) => {
-                    let _ = retention.discard().await;
-                    Err(e)
-                }
-                _ => unreachable!("no filters cofigured"),
-            }
         }
+        for buf in &overflow {
+            retention.write_all(buf).await.map_err(Error::from)?;
+        }
+        drop(overflow);
+
+        // Phase 3: stream remaining source bytes to retention.
+        let mut retention_total = total;
+        if mutated {
+            retention_total = retention_total - parsed.payload_data_offset as u64 + payload_offset;
+        }
+        loop {
+            let n = poll_read(&mut source, &mut chunk).await?;
+            if n == 0 {
+                break;
+            }
+            retention
+                .write_all(&chunk[..n])
+                .await
+                .map_err(Error::from)?;
+            retention_total += n as u64;
+        }
+
+        retention.flush().await.map_err(Error::from)?;
+
+        // Phase 4: build Bundle<S> from parsed structs.
+        let payload_crc = if parsed.payload_crc_type != 0 {
+            let tail_start = payload_offset + parsed.payload_len;
+            let tail_len = retention_total - tail_start;
+            let tail = retention.reader(tail_start, tail_len).await?;
+            let mut tail_dec = StreamDecoder::new(tail);
+            Crc::decode_stream(&mut tail_dec, parsed.payload_crc_type)?
+        } else {
+            Crc::None
+        };
+
+        extensions.push(CanonicalBlock {
+            block_type: 1,
+            block_number: 1,
+            flags: BlockFlags::from_bits(parsed.payload_flags),
+            crc: payload_crc,
+            data: BlockData::Retained {
+                offset: payload_offset,
+                len: parsed.payload_len,
+            },
+        });
+
+        Ok(ReadResult::Accepted(Bundle::from_parts(
+            primary, extensions, retention,
+        )))
     }
 }
 
@@ -246,7 +212,8 @@ struct ParsedMetadata {
 /// Parse primary + extension blocks from a header buffer to run filters.
 fn parse_metadata(header_buf: &[u8]) -> Result<ParsedMetadata, Error> {
     let chain = Arc::new(FilterChain::new());
-    let mut reader = OpenBundleReader::open(header_buf, NoopRetention, chain);
+    let mut reader: OpenBundleReader<&[u8], NoopRetention> =
+        OpenBundleReader::open(header_buf, NoopRetention, chain);
 
     let payload_len = loop {
         match reader.next_block()? {

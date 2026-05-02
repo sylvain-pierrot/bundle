@@ -1,27 +1,20 @@
-//! Streaming bundle reader with optional ingress filter pipeline.
+//! Step-by-step bundle parsing session.
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use bundle_bpv7::{CanonicalBlock, Crc, Error, PrimaryBlock};
 use bundle_cbor::{Encoder, StreamDecoder, ToCbor};
-use bundle_io::{Error as IoError, Read};
+use bundle_io::Read;
 
+use super::{BlockEvent, ReadResult};
 use crate::bundle::Bundle;
-use crate::filter::{BundleFilter, BundleMetadata, BundleMutator, FilterChain, FilterRejection};
+use crate::filter::{BundleMetadata, FilterChain};
 use crate::io::adapters::{CaptureReader, DeferredReader, TeeReader};
 use crate::retention::Retention;
 
-/// Result of reading a bundle through a filter pipeline.
-pub enum ReadResult<S> {
-    /// Bundle passed all filters and is ready to use.
-    Accepted(Bundle<S>),
-    /// Bundle was rejected by a filter.
-    Rejected(FilterRejection),
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum State {
+pub(crate) enum State {
     Initial,
     Blocks,
     PayloadData,
@@ -29,73 +22,17 @@ enum State {
     Done,
 }
 
-/// What [`OpenBundleReader::next_block`] yielded.
-pub enum BlockEvent {
-    Extension(usize),
-    Payload { len: u64 },
-}
-
-/// Streaming bundle parser with optional ingress filter pipeline.
-///
-/// Filters run in-flight before the payload touches retention.
-/// Rejected bundles waste zero storage I/O.
-pub struct BundleReader {
-    chain: Arc<FilterChain>,
-}
-
-impl BundleReader {
-    pub fn new() -> Self {
-        BundleReader {
-            chain: Arc::new(FilterChain::new()),
-        }
-    }
-
-    pub fn filter(mut self, f: impl BundleFilter + 'static) -> Self {
-        Arc::get_mut(&mut self.chain)
-            .expect("filter must be called before cloning the reader")
-            .add_filter(f);
-        self
-    }
-
-    pub fn mutator(mut self, m: impl BundleMutator + 'static) -> Self {
-        Arc::get_mut(&mut self.chain)
-            .expect("mutator must be called before cloning the reader")
-            .add_mutator(m);
-        self
-    }
-
-    /// Parse a bundle from a source, storing wire bytes in the retention.
-    pub fn read_from<R: Read, S: Retention>(
-        &self,
-        source: R,
-        retention: S,
-    ) -> Result<ReadResult<S>, Error> {
-        OpenBundleReader::open(source, retention, self.chain.clone()).into_bundle()
-    }
-
-    /// Open a source for step-by-step parsing.
-    pub fn open<R: Read, S: Retention>(&self, source: R, retention: S) -> OpenBundleReader<R, S> {
-        OpenBundleReader::open(source, retention, self.chain.clone())
-    }
-}
-
-impl Default for BundleReader {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// An active parsing session, created by [`BundleReader::open`].
+/// An active parsing session, created by [`BundleReader::open`](super::BundleReader::open).
 pub struct OpenBundleReader<R, S: Retention> {
-    dec: StreamDecoder<DeferredReader<R, S>>,
-    state: State,
-    primary: Option<PrimaryBlock>,
-    blocks: Vec<CanonicalBlock>,
-    payload_idx: Option<usize>,
-    payload_crc_type: u64,
-    payload_remaining: u64,
-    retention: Option<S>,
-    chain: Arc<FilterChain>,
+    pub(crate) dec: StreamDecoder<DeferredReader<R, S>>,
+    pub(crate) state: State,
+    pub(crate) primary: Option<PrimaryBlock>,
+    pub(crate) blocks: Vec<CanonicalBlock>,
+    pub(crate) payload_idx: Option<usize>,
+    pub(crate) payload_crc_type: u64,
+    pub(crate) payload_remaining: u64,
+    pub(crate) retention: Option<S>,
+    pub(crate) chain: Arc<FilterChain>,
 }
 
 impl<R: Read, S: Retention> OpenBundleReader<R, S> {
@@ -181,7 +118,6 @@ impl<R: Read, S: Retention> OpenBundleReader<R, S> {
 
                 if let Some(retention) = self.retention.take() {
                     if mutated {
-                        // Re-encode mutated headers so storage holds the mutated version.
                         let mut enc = Encoder::with_capacity(256);
                         enc.write_indefinite_array();
                         self.primary
@@ -191,7 +127,6 @@ impl<R: Read, S: Retention> OpenBundleReader<R, S> {
                         for ext in &self.blocks {
                             ext.encode(&mut enc);
                         }
-                        // Payload block header (data streams through after this).
                         let has_crc = block.crc.crc_type() != 0;
                         enc.write_array(if has_crc { 6 } else { 5 });
                         enc.write_uint(block.block_type);
@@ -200,7 +135,6 @@ impl<R: Read, S: Retention> OpenBundleReader<R, S> {
                         enc.write_uint(block.crc.crc_type());
                         enc.write_bstr_header(data_len);
 
-                        // Update payload offset to match the re-encoded layout.
                         let new_offset = enc.position() as u64;
                         block.data = bundle_bpv7::BlockData::Retained {
                             offset: new_offset,
@@ -235,13 +169,6 @@ impl<R: Read, S: Retention> OpenBundleReader<R, S> {
 
     pub fn blocks(&self) -> &[CanonicalBlock] {
         &self.blocks
-    }
-
-    pub fn payload_reader(&mut self) -> Result<PayloadReader<'_, R, S>, Error> {
-        if self.state != State::PayloadData {
-            return Err(Error::PayloadNotConsumed);
-        }
-        Ok(PayloadReader { reader: self })
     }
 
     pub fn walk(&mut self, len: u64) -> Result<(), Error> {
@@ -288,49 +215,20 @@ impl<R: Read, S: Retention> OpenBundleReader<R, S> {
                         retention,
                     )));
                 }
-                Err(Error::FilterRejected(r)) => return Ok(ReadResult::Rejected(r)),
+                Err(Error::FilterRejected(r)) => {
+                    if let Some(ref mut ret) = self.retention {
+                        let _ = ret.discard();
+                    }
+                    return Ok(ReadResult::Rejected(r));
+                }
                 Err(e) => break e,
             }
         };
 
-        // Error path: discard retention
         let mut retention = self.dec.into_inner().into_retention().or(self.retention);
         if let Some(ref mut r) = retention {
             let _ = r.discard();
         }
         Err(err)
-    }
-}
-
-/// A reader that yields exactly the payload bytes.
-pub struct PayloadReader<'a, R, S: Retention> {
-    reader: &'a mut OpenBundleReader<R, S>,
-}
-
-impl<R: Read, S: Retention> Read for PayloadReader<'_, R, S> {
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize, IoError> {
-        if self.reader.payload_remaining == 0 {
-            return Ok(0);
-        }
-        let max = buf.len().min(self.reader.payload_remaining as usize);
-        let n = self.reader.dec.inner().read(&mut buf[..max])?;
-        self.reader.payload_remaining -= n as u64;
-        self.reader.dec.advance(n as u64);
-        if self.reader.payload_remaining == 0 {
-            self.reader.state = State::PayloadConsumed;
-        }
-        Ok(n)
-    }
-
-    fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), IoError> {
-        let mut offset = 0;
-        while offset < buf.len() {
-            let n = self.read(&mut buf[offset..])?;
-            if n == 0 {
-                return Err(IoError::UnexpectedEof);
-            }
-            offset += n;
-        }
-        Ok(())
     }
 }

@@ -31,6 +31,7 @@ fn main() {
         b"hello DTN",
         MemoryRetention::new(),
     )
+    .unwrap()
     .extension(HopCount {
         limit: 30,
         count: 5,
@@ -101,6 +102,7 @@ fn main() {
         &vec![0u8; 2_000_000],
         MemoryRetention::new(),
     )
+    .unwrap()
     .build()
     .unwrap();
 

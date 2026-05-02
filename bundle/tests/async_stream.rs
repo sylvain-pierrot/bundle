@@ -70,6 +70,7 @@ async fn async_reader_roundtrip() {
         payload,
         MemoryRetention::new(),
     )
+    .unwrap()
     .build()
     .unwrap();
 
@@ -160,6 +161,7 @@ async fn async_full_roundtrip() {
         payload,
         MemoryRetention::new(),
     )
+    .unwrap()
     .extension(HopCount {
         limit: 30,
         count: 1,

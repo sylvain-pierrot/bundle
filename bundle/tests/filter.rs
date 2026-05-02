@@ -28,6 +28,7 @@ fn build_bundle(payload: &[u8]) -> BundleBuilder<MemoryRetention> {
         payload,
         MemoryRetention::new(),
     )
+    .unwrap()
 }
 
 fn encode(builder: BundleBuilder<MemoryRetention>) -> Vec<u8> {

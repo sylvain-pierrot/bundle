@@ -162,7 +162,7 @@ impl S3Ops for MinioClient {
     }
 }
 
-const BUCKET: &str = "bundle-bundles";
+const BUCKET: &str = "bundles";
 
 #[tokio::test]
 async fn s3_small_bundle() {
@@ -180,6 +180,7 @@ async fn s3_small_bundle() {
         payload,
         MemoryRetention::new(),
     )
+    .unwrap()
     .build()
     .unwrap();
 
@@ -199,7 +200,7 @@ async fn s3_small_bundle() {
     assert_eq!(decoded.payload_len(), payload.len() as u64);
 
     let mut buf = Vec::new();
-    decoded.payload(&mut buf).await.unwrap();
+    decoded.async_payload(&mut buf).await.unwrap();
     assert_eq!(buf, payload);
 }
 
@@ -224,6 +225,7 @@ async fn s3_large_bundle_multipart() {
         &payload,
         MemoryRetention::new(),
     )
+    .unwrap()
     .build()
     .unwrap();
 
@@ -242,7 +244,7 @@ async fn s3_large_bundle_multipart() {
     assert_eq!(decoded.payload_len(), payload.len() as u64);
 
     let mut buf = Vec::new();
-    decoded.payload(&mut buf).await.unwrap();
+    decoded.async_payload(&mut buf).await.unwrap();
     assert_eq!(buf.len(), payload.len());
     assert!(buf.iter().all(|&b| b == 0xAB));
 }
@@ -293,15 +295,15 @@ async fn s3_stream_from_http() {
         .unwrap();
 
     // Fetch via HTTP (anonymous download) — returns impl Read
-    let url = "http://localhost:9000/bundle-bundles/source/stream-test";
-    let resp = ureq::get(url).call().unwrap();
+    let url = format!("http://localhost:9000/{BUCKET}/source/stream-test");
+    let resp = ureq::get(&url).call().unwrap();
     let content_length: u64 = resp.header("content-length").unwrap().parse().unwrap();
     let body = resp.into_reader();
 
     // Wrap sync reader as AsyncRead, stream to S3 via from_stream
     let async_body = futures::io::AllowStdIo::new(body);
     let retention = S3Retention::new(MinioClient::new().await, BUCKET, "test/streamed");
-    let bundle = BundleBuilder::from_stream(
+    let bundle = BundleBuilder::from_async_stream(
         Eid::Ipn {
             allocator_id: 0,
             node_number: 10,
@@ -326,7 +328,7 @@ async fn s3_stream_from_http() {
 
     // Read payload back from S3 and verify
     let mut buf = Vec::new();
-    bundle.payload(&mut buf).await.unwrap();
+    bundle.async_payload(&mut buf).await.unwrap();
     assert_eq!(buf.len(), source_data.len());
     assert!(buf.iter().all(|&b| b == 0x42));
 }
@@ -379,6 +381,7 @@ async fn s3_throughput_test(size_mb: usize) {
         &payload,
         MemoryRetention::new(),
     )
+    .unwrap()
     .build()
     .unwrap();
     let mut encoded = Vec::new();
@@ -401,7 +404,7 @@ async fn s3_throughput_test(size_mb: usize) {
     // Phase 3: read payload back from S3
     let t = Instant::now();
     let mut buf = Vec::new();
-    decoded.payload(&mut buf).await.unwrap();
+    decoded.async_payload(&mut buf).await.unwrap();
     throughput("read payload ← S3", payload_size as u64, t.elapsed());
 
     assert_eq!(buf.len(), payload_size);
@@ -411,7 +414,7 @@ async fn s3_throughput_test(size_mb: usize) {
     let t = Instant::now();
     let mut out = Vec::new();
     decoded
-        .encode_to(futures::io::Cursor::new(&mut out))
+        .async_encode_to(futures::io::Cursor::new(&mut out))
         .await
         .unwrap();
     throughput("encode S3 → wire", out.len() as u64, t.elapsed());
@@ -438,6 +441,7 @@ async fn s3_throughput_many_small() {
         payload,
         MemoryRetention::new(),
     )
+    .unwrap()
     .build()
     .unwrap();
     let mut encoded = Vec::new();
