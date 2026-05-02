@@ -3,9 +3,9 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use aqueduct_bpv7::{CanonicalBlock, Crc, Error, PrimaryBlock};
-use aqueduct_cbor::StreamDecoder;
-use aqueduct_io::{Error as IoError, Read};
+use bundle_bpv7::{CanonicalBlock, Crc, Error, PrimaryBlock};
+use bundle_cbor::StreamDecoder;
+use bundle_io::{Error as IoError, Read};
 
 use crate::bundle::Bundle;
 use crate::filter::{BundleFilter, BundleMetadata, BundleMutator, FilterChain};
@@ -239,7 +239,7 @@ impl<R: Read, S: Retention> OpenBundleReader<R, S> {
                         .ok_or(Error::IncompleteRead)?;
                     if let Err(e) = retention.flush() {
                         let _ = retention.discard();
-                        return Err(Error::Cbor(aqueduct_cbor::Error::Io(e)));
+                        return Err(Error::Cbor(bundle_cbor::Error::Io(e)));
                     }
                     return Ok(Bundle::from_parts(primary, self.blocks, retention));
                 }

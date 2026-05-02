@@ -5,11 +5,11 @@
 
 use std::time::Instant;
 
-use aqueduct::{BundleAsyncReader, BundleBuilder, MemoryRetention, S3Ops, S3Retention};
-use aqueduct_bpv7::Eid;
-use aqueduct_io::{Error as IoError, Read};
 use async_trait::async_trait;
 use aws_sdk_s3::primitives::ByteStream;
+use bundle::{BundleAsyncReader, BundleBuilder, MemoryRetention, S3Ops, S3Retention};
+use bundle_bpv7::Eid;
+use bundle_io::{Error as IoError, Read};
 
 /// S3Ops implementation using aws-sdk-s3, backed by MinIO.
 struct MinioClient {
@@ -162,7 +162,7 @@ impl S3Ops for MinioClient {
     }
 }
 
-const BUCKET: &str = "aqueduct-bundles";
+const BUCKET: &str = "bundle-bundles";
 
 #[tokio::test]
 async fn s3_small_bundle() {
@@ -297,7 +297,7 @@ async fn s3_stream_from_http() {
         .unwrap();
 
     // Fetch via HTTP (anonymous download) — returns impl Read
-    let url = "http://localhost:9000/aqueduct-bundles/source/stream-test";
+    let url = "http://localhost:9000/bundle-bundles/source/stream-test";
     let resp = ureq::get(url).call().unwrap();
     let content_length: u64 = resp.header("content-length").unwrap().parse().unwrap();
     let body = resp.into_reader();

@@ -2,7 +2,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, BufReader, BufWriter, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use aqueduct_io::{Error as IoError, Read as AqRead, Write as AqWrite};
+use bundle_io::{Error as IoError, Read as AqRead, Write as AqWrite};
 
 use super::Retention;
 

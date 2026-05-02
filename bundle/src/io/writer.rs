@@ -3,8 +3,8 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use aqueduct_bpv7::{BlockFlags, CanonicalBlock, Crc, CrcHasher, Error, PrimaryBlock};
-use aqueduct_cbor::{Encoder, StreamEncoder, ToCbor, Write};
+use bundle_bpv7::{BlockFlags, CanonicalBlock, Crc, CrcHasher, Error, PrimaryBlock};
+use bundle_cbor::{Encoder, StreamEncoder, ToCbor};
 
 use crate::filter::{BundleFilter, BundleMetadata, BundleMutator, FilterChain};
 
@@ -15,11 +15,84 @@ enum State {
     Payload,
 }
 
-/// Streaming bundle encoder with optional egress filter pipeline.
+/// Streaming bundle writer with optional egress filter pipeline.
 ///
 /// Filters run before the first byte hits the wire.
 /// Rejected bundles waste zero network I/O.
-pub struct BundleWriter<W> {
+pub struct BundleWriter {
+    chain: Arc<FilterChain>,
+}
+
+impl BundleWriter {
+    pub fn new() -> Self {
+        BundleWriter {
+            chain: Arc::new(FilterChain::new()),
+        }
+    }
+
+    pub fn filter(mut self, f: impl BundleFilter + 'static) -> Self {
+        Arc::get_mut(&mut self.chain)
+            .expect("filter must be called before writing")
+            .add_filter(f);
+        self
+    }
+
+    pub fn mutator(mut self, m: impl BundleMutator + 'static) -> Self {
+        Arc::get_mut(&mut self.chain)
+            .expect("mutator must be called before writing")
+            .add_mutator(m);
+        self
+    }
+
+    /// Write a complete bundle to the destination.
+    pub fn write_to<S: crate::retention::Retention, W: bundle_io::Write>(
+        &self,
+        bundle: &crate::bundle::Bundle<S>,
+        writer: W,
+    ) -> Result<(), Error> {
+        use bundle_bpv7::BlockData;
+        use bundle_io::Read;
+
+        let mut w = OpenBundleWriter::new(writer, self.chain.clone())?;
+        w.write_primary(bundle.primary())?;
+
+        for block in bundle.blocks() {
+            match &block.data {
+                BlockData::Inline(_) => w.write_extension(block)?,
+                BlockData::Retained { offset, len } => {
+                    w.begin_payload(block.flags, block.crc, *len)?;
+                    let mut reader = bundle.retention().reader(*offset, *len)?;
+                    let mut buf = [0u8; 65536];
+                    loop {
+                        let n = Read::read(&mut reader, &mut buf)?;
+                        if n == 0 {
+                            break;
+                        }
+                        w.write_payload_data(&buf[..n])?;
+                    }
+                    w.end_payload()?;
+                }
+            }
+        }
+
+        w.finish()?;
+        Ok(())
+    }
+
+    /// Open a destination for step-by-step writing.
+    pub fn open<W: bundle_io::Write>(&self, writer: W) -> Result<OpenBundleWriter<W>, Error> {
+        OpenBundleWriter::new(writer, self.chain.clone())
+    }
+}
+
+impl Default for BundleWriter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// An active writing session, created by [`BundleWriter::open`].
+pub struct OpenBundleWriter<W> {
     enc: StreamEncoder<W>,
     state: State,
     payload_hasher: Option<CrcHasher>,
@@ -31,35 +104,20 @@ pub struct BundleWriter<W> {
     deferred: bool,
 }
 
-impl<W: Write> BundleWriter<W> {
-    pub fn new(writer: W) -> Result<Self, Error> {
+impl<W: bundle_io::Write> OpenBundleWriter<W> {
+    fn new(writer: W, chain: Arc<FilterChain>) -> Result<Self, Error> {
+        let deferred = !chain.is_empty();
         Ok(Self {
             enc: StreamEncoder::new(writer),
             state: State::Init,
             payload_hasher: None,
             payload_crc: Crc::None,
             payload_remaining: 0,
-            chain: Arc::new(FilterChain::new()),
+            chain,
             primary: None,
             extensions: Vec::new(),
-            deferred: false,
+            deferred,
         })
-    }
-
-    pub fn filter(mut self, f: impl BundleFilter + 'static) -> Self {
-        Arc::get_mut(&mut self.chain)
-            .expect("filter must be called before writing")
-            .add_filter(f);
-        self.deferred = true;
-        self
-    }
-
-    pub fn mutator(mut self, m: impl BundleMutator + 'static) -> Self {
-        Arc::get_mut(&mut self.chain)
-            .expect("mutator must be called before writing")
-            .add_mutator(m);
-        self.deferred = true;
-        self
     }
 
     pub fn write_primary(&mut self, primary: &PrimaryBlock) -> Result<(), Error> {
@@ -102,7 +160,6 @@ impl<W: Write> BundleWriter<W> {
             return Err(Error::IncompleteRead);
         }
 
-        // Egress filter gate: all metadata available
         if self.deferred {
             let mut primary = self.primary.take().ok_or(Error::IncompleteRead)?;
             let mut extensions = core::mem::take(&mut self.extensions);
@@ -115,7 +172,6 @@ impl<W: Write> BundleWriter<W> {
             self.chain.run_filters(&meta)?;
             self.chain.run_mutators(&mut primary, &mut extensions);
 
-            // Now write: array start + primary + extensions
             self.enc.write_indefinite_array()?;
 
             let mut buf = Encoder::with_capacity(128);
@@ -191,7 +247,9 @@ impl<W: Write> BundleWriter<W> {
             return Err(Error::PayloadNotConsumed);
         }
         let mut enc = self.enc;
-        enc.write_break()?;
+        if self.state != State::Init {
+            enc.write_break()?;
+        }
         enc.flush()?;
         Ok(enc.into_inner())
     }

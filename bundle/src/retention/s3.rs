@@ -7,8 +7,8 @@
 
 use std::io::Cursor;
 
-use aqueduct_io::{Error as IoError, Read};
 use async_trait::async_trait;
+use bundle_io::{Error as IoError, Read};
 
 use super::AsyncRetention;
 
@@ -135,11 +135,11 @@ pub struct S3Reader {
 
 impl Read for S3Reader {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, IoError> {
-        aqueduct_io::Read::read(&mut self.data, buf)
+        bundle_io::Read::read(&mut self.data, buf)
     }
 
     fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), IoError> {
-        aqueduct_io::Read::read_exact(&mut self.data, buf)
+        bundle_io::Read::read_exact(&mut self.data, buf)
     }
 }
 

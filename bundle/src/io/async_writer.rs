@@ -5,9 +5,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Poll;
 
-use aqueduct_bpv7::{BlockFlags, CanonicalBlock, Crc, CrcHasher, Error, PrimaryBlock};
-use aqueduct_cbor::{Encoder, ToCbor};
-use aqueduct_io::Error as IoError;
+use bundle_bpv7::{BlockFlags, CanonicalBlock, Crc, CrcHasher, Error, PrimaryBlock};
+use bundle_cbor::{Encoder, ToCbor};
+use bundle_io::Error as IoError;
 use futures_io::AsyncWrite;
 
 use crate::filter::{BundleFilter, BundleMetadata, BundleMutator, FilterChain};
@@ -206,7 +206,7 @@ async fn write_all<W: AsyncWrite + Unpin>(writer: &mut W, mut buf: &[u8]) -> Res
             Pin::new(&mut *writer).poll_write(cx, buf)
         })
         .await
-        .map_err(|e| Error::Cbor(aqueduct_cbor::Error::Io(IoError::Io(e))))?;
+        .map_err(|e| Error::Cbor(bundle_cbor::Error::Io(IoError::Io(e))))?;
         buf = &buf[n..];
     }
     Ok(())
@@ -215,5 +215,5 @@ async fn write_all<W: AsyncWrite + Unpin>(writer: &mut W, mut buf: &[u8]) -> Res
 async fn flush<W: AsyncWrite + Unpin>(writer: &mut W) -> Result<(), Error> {
     std::future::poll_fn(|cx| -> Poll<io::Result<()>> { Pin::new(&mut *writer).poll_flush(cx) })
         .await
-        .map_err(|e| Error::Cbor(aqueduct_cbor::Error::Io(IoError::Io(e))))
+        .map_err(|e| Error::Cbor(bundle_cbor::Error::Io(IoError::Io(e))))
 }

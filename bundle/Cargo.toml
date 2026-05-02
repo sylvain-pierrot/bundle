@@ -1,25 +1,25 @@
 [package]
-name = "aqueduct"
+name = "bundle"
 version = "0.1.0"
 edition = "2024"
 
 [features]
 default = ["std"]
-std = ["aqueduct-cbor/std", "aqueduct-io/std"]
+std = ["bundle-cbor/std", "bundle-io/std"]
 async = ["std", "futures-io", "async-trait"]
 
 [dependencies]
-aqueduct-bpv7 = { path = "../bpv7" }
-aqueduct-cbor = { path = "../cbor", default-features = false }
-aqueduct-io = { path = "../io", default-features = false }
+bundle-bpv7 = { path = "../bpv7" }
+bundle-cbor = { path = "../cbor", default-features = false }
+bundle-io = { path = "../io", default-features = false }
 async-trait = { version = "0.1", optional = true }
 embedded-storage = { version = "0.3", optional = true }
 futures-io = { version = "0.3", optional = true }
 thiserror = { version = "2.0.18", default-features = false }
 
 [dev-dependencies]
-aqueduct-bpv7 = { path = "../bpv7" }
-aqueduct-io = { path = "../io" }
+bundle-bpv7 = { path = "../bpv7" }
+bundle-io = { path = "../io" }
 async-trait = "0.1"
 aws-config = "1"
 aws-sdk-s3 = "1"

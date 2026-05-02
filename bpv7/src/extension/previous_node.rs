@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use aqueduct_cbor::{Encoder, ToCbor};
+use bundle_cbor::{Encoder, ToCbor};
 
 use crate::eid::Eid;
 use crate::error::Error;
@@ -16,7 +16,7 @@ impl Extension for PreviousNode {
     const BLOCK_TYPE: u64 = 6;
 
     fn parse(data: &[u8]) -> Result<Self, Error> {
-        let mut dec = aqueduct_cbor::Decoder::new(data);
+        let mut dec = bundle_cbor::Decoder::new(data);
         let node_id = Eid::decode_buf(&mut dec)?;
         Ok(PreviousNode { node_id })
     }

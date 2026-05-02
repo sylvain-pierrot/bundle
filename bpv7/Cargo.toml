@@ -1,5 +1,5 @@
 [package]
-name = "aqueduct-bpv7"
+name = "bundle-bpv7"
 version = "0.1.0"
 edition = "2024"
 
@@ -7,7 +7,7 @@ edition = "2024"
 default = []
 
 [dependencies]
-aqueduct-cbor = { path = "../cbor", default-features = false }
-aqueduct-io = { path = "../io", default-features = false }
+bundle-cbor = { path = "../cbor", default-features = false }
+bundle-io = { path = "../io", default-features = false }
 crc = { version = "3", default-features = false }
 thiserror = { version = "2.0.18", default-features = false }

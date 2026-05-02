@@ -24,50 +24,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
-name = "aqueduct"
-version = "0.1.0"
-dependencies = [
- "aqueduct-bpv7",
- "aqueduct-cbor",
- "aqueduct-io",
- "async-trait",
- "aws-config",
- "aws-sdk-s3",
- "embedded-storage",
- "futures",
- "futures-io",
- "thiserror",
- "tokio",
- "ureq",
-]
-
-[[package]]
-name = "aqueduct-bpv7"
-version = "0.1.0"
-dependencies = [
- "aqueduct-cbor",
- "aqueduct-io",
- "crc",
- "thiserror",
-]
-
-[[package]]
-name = "aqueduct-cbor"
-version = "0.1.0"
-dependencies = [
- "aqueduct-io",
- "thiserror",
-]
-
-[[package]]
-name = "aqueduct-io"
-version = "0.1.0"
-dependencies = [
- "embedded-io",
- "thiserror",
-]
-
-[[package]]
 name = "async-trait"
 version = "0.1.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -631,6 +587,63 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
 
 [[package]]
+name = "bundle"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "aws-config",
+ "aws-sdk-s3",
+ "bundle-bpv7",
+ "bundle-cbor",
+ "bundle-io",
+ "embedded-storage",
+ "futures",
+ "futures-io",
+ "thiserror",
+ "tokio",
+ "ureq",
+]
+
+[[package]]
+name = "bundle-bpa"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bundle",
+ "bundle-bpv7",
+ "bundle-cbor",
+ "bundle-io",
+ "futures",
+ "tokio",
+]
+
+[[package]]
+name = "bundle-bpv7"
+version = "0.1.0"
+dependencies = [
+ "bundle-cbor",
+ "bundle-io",
+ "crc",
+ "thiserror",
+]
+
+[[package]]
+name = "bundle-cbor"
+version = "0.1.0"
+dependencies = [
+ "bundle-io",
+ "thiserror",
+]
+
+[[package]]
+name = "bundle-io"
+version = "0.1.0"
+dependencies = [
+ "embedded-io",
+ "thiserror",
+]
+
+[[package]]
 name = "bytes"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -911,9 +924,9 @@ dependencies = [
 
 [[package]]
 name = "embedded-io"
-version = "0.6.1"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
+checksum = "9eb1aa714776b75c7e67e1da744b81a129b3ff919c8712b5e1b32252c1f07cc7"
 
 [[package]]
 name = "embedded-storage"

@@ -8,7 +8,7 @@ mod memory;
 #[cfg(feature = "async")]
 pub mod s3;
 
-use aqueduct_io::{Error as IoError, Read, Write};
+use bundle_io::{Error as IoError, Read, Write};
 
 pub use memory::MemoryRetention;
 

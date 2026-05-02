@@ -3,9 +3,9 @@ pub mod builder;
 use alloc::vec::Vec;
 use core::ops::{Deref, DerefMut};
 
-use aqueduct_bpv7::{BlockData, Bundle as Bpv7Bundle, CanonicalBlock, Error, PrimaryBlock};
-use aqueduct_cbor::{Encoder, ToCbor};
-use aqueduct_io::{Error as IoError, Read, Write};
+use bundle_bpv7::{BlockData, Bundle as Bpv7Bundle, CanonicalBlock, Error, PrimaryBlock};
+use bundle_cbor::{Encoder, ToCbor};
+use bundle_io::{Error as IoError, Read, Write};
 
 use crate::retention::Retention;
 
@@ -106,33 +106,7 @@ impl<S: Retention> Bundle<S> {
     }
 
     pub fn encode_to<W: Write>(&self, writer: W) -> Result<(), Error> {
-        self.validate()?;
-        use crate::io::BundleWriter;
-
-        let mut w = BundleWriter::new(writer)?;
-        w.write_primary(self.primary())?;
-
-        for block in self.blocks() {
-            match &block.data {
-                BlockData::Inline(_) => w.write_extension(block)?,
-                BlockData::Retained { offset, len } => {
-                    w.begin_payload(block.flags, block.crc, *len)?;
-                    let mut reader = self.retention.reader(*offset, *len)?;
-                    let mut buf = [0u8; 65536];
-                    loop {
-                        let n = reader.read(&mut buf)?;
-                        if n == 0 {
-                            break;
-                        }
-                        w.write_payload_data(&buf[..n])?;
-                    }
-                    w.end_payload()?;
-                }
-            }
-        }
-
-        w.finish()?;
-        Ok(())
+        crate::io::BundleWriter::new().write_to(self, writer)
     }
 }
 

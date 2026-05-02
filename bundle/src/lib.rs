@@ -9,7 +9,9 @@ pub mod retention;
 pub use bundle::Bundle;
 pub use bundle::builder::BundleBuilder;
 pub use filter::FilterChain;
-pub use io::{BlockEvent, BundleReader, BundleWriter, OpenBundleReader, PayloadReader};
+pub use io::{
+    BlockEvent, BundleReader, BundleWriter, OpenBundleReader, OpenBundleWriter, PayloadReader,
+};
 pub use retention::{MemoryRetention, Retention};
 
 #[cfg(feature = "std")]
