@@ -1,4 +1,4 @@
-use bundle::{BundleBuilder, BundleReader, MemoryRetention};
+use bundle::{BundleBuilder, BundleReader, MemoryRetention, ReadResult};
 use bundle_bpv7::{
     BlockFlags, BundleAge, BundleFlags, CanonicalBlock, Crc, CrcHasher, CreationTimestamp, Eid,
     Extension, HopCount, PreviousNode,
@@ -17,9 +17,12 @@ fn roundtrip_minimal_bundle() {
     .build()
     .unwrap();
     let encoded = bundle.encode().unwrap();
-    let decoded = BundleReader::new()
+    let ReadResult::Accepted(decoded) = BundleReader::new()
         .read_from(encoded.as_slice(), MemoryRetention::new())
-        .unwrap();
+        .unwrap()
+    else {
+        panic!("expected accepted");
+    };
 
     assert_eq!(decoded.primary().version, 7);
     assert_eq!(decoded.primary().dest_eid, Eid::Null);
@@ -35,9 +38,12 @@ fn roundtrip_empty_payload() {
         .build()
         .unwrap();
     let encoded = bundle.encode().unwrap();
-    let decoded = BundleReader::new()
+    let ReadResult::Accepted(decoded) = BundleReader::new()
         .read_from(encoded.as_slice(), MemoryRetention::new())
-        .unwrap();
+        .unwrap()
+    else {
+        panic!("expected accepted");
+    };
 
     assert_eq!(decoded.payload_len(), 0);
 
@@ -83,9 +89,12 @@ fn roundtrip_with_extensions() {
     .unwrap();
 
     let encoded = bundle.encode().unwrap();
-    let decoded = BundleReader::new()
+    let ReadResult::Accepted(decoded) = BundleReader::new()
         .read_from(encoded.as_slice(), MemoryRetention::new())
-        .unwrap();
+        .unwrap()
+    else {
+        panic!("expected accepted");
+    };
 
     assert_eq!(decoded.primary().dest_eid, dest);
     assert_eq!(decoded.extensions().count(), 2);
@@ -127,9 +136,12 @@ fn roundtrip_with_dtn_eids() {
     .unwrap();
 
     let encoded = bundle.encode().unwrap();
-    let decoded = BundleReader::new()
+    let ReadResult::Accepted(decoded) = BundleReader::new()
         .read_from(encoded.as_slice(), MemoryRetention::new())
-        .unwrap();
+        .unwrap()
+    else {
+        panic!("expected accepted");
+    };
 
     assert_eq!(
         decoded.primary().dest_eid,
@@ -154,9 +166,12 @@ fn roundtrip_fragment() {
         .unwrap();
 
     let encoded = bundle.encode().unwrap();
-    let decoded = BundleReader::new()
+    let ReadResult::Accepted(decoded) = BundleReader::new()
         .read_from(encoded.as_slice(), MemoryRetention::new())
-        .unwrap();
+        .unwrap()
+    else {
+        panic!("expected accepted");
+    };
 
     let frag = decoded.primary().fragment.unwrap();
     assert_eq!(frag.offset, 100);
@@ -173,9 +188,12 @@ fn roundtrip_crc_values_nonzero() {
         .build()
         .unwrap();
     let encoded = bundle.encode().unwrap();
-    let decoded = BundleReader::new()
+    let ReadResult::Accepted(decoded) = BundleReader::new()
         .read_from(encoded.as_slice(), MemoryRetention::new())
-        .unwrap();
+        .unwrap()
+    else {
+        panic!("expected accepted");
+    };
 
     match decoded.primary().crc {
         Crc::Crc32c(v) => assert_ne!(v, 0),
@@ -340,7 +358,9 @@ fn crc_verify_detects_corruption() {
 
     let mut corrupted = encoded.clone();
     corrupted[5] ^= 0xFF;
-    if let Ok(bad) = BundleReader::new().read_from(corrupted.as_slice(), MemoryRetention::new()) {
+    if let Ok(ReadResult::Accepted(bad)) =
+        BundleReader::new().read_from(corrupted.as_slice(), MemoryRetention::new())
+    {
         let reencoded = bad.encode().unwrap();
         assert_ne!(reencoded, corrupted);
     }

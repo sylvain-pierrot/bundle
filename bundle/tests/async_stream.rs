@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use bundle::{
     AsyncRetention, BundleAsyncReader, BundleAsyncWriter, BundleBuilder, BundleReader,
-    MemoryRetention, Retention,
+    MemoryRetention, ReadResult, Retention,
 };
 use bundle_bpv7::{BlockFlags, BundleFlags, Crc, CreationTimestamp, Eid, HopCount, PrimaryBlock};
 use bundle_io::{Error as IoError, Write};
@@ -76,13 +76,16 @@ async fn async_reader_roundtrip() {
     let mut encoded = Vec::new();
     bundle.encode_to(&mut encoded).unwrap();
 
-    let decoded = BundleAsyncReader::new()
+    let ReadResult::Accepted(decoded) = BundleAsyncReader::new()
         .read_from(
             futures::io::Cursor::new(&encoded),
             AsyncMemoryRetention::new(),
         )
         .await
-        .unwrap();
+        .unwrap()
+    else {
+        panic!("expected accepted");
+    };
 
     assert_eq!(decoded.primary().dest_eid, bundle.primary().dest_eid);
     assert_eq!(decoded.payload_len(), payload.len() as u64);
@@ -124,9 +127,12 @@ async fn async_writer_roundtrip() {
     writer.end_payload().await.unwrap();
     writer.finish().await.unwrap();
 
-    let decoded = BundleReader::new()
+    let ReadResult::Accepted(decoded) = BundleReader::new()
         .read_from(buf.as_slice(), MemoryRetention::new())
-        .unwrap();
+        .unwrap()
+    else {
+        panic!("expected accepted");
+    };
 
     assert_eq!(decoded.primary().dest_eid, primary.dest_eid);
 
@@ -169,13 +175,16 @@ async fn async_full_roundtrip() {
     bundle.encode_to(&mut encoded).unwrap();
 
     // Async decode
-    let decoded = BundleAsyncReader::new()
+    let ReadResult::Accepted(decoded) = BundleAsyncReader::new()
         .read_from(
             futures::io::Cursor::new(&encoded),
             AsyncMemoryRetention::new(),
         )
         .await
-        .unwrap();
+        .unwrap()
+    else {
+        panic!("expected accepted");
+    };
 
     assert_eq!(decoded.primary().dest_eid, bundle.primary().dest_eid);
     assert_eq!(decoded.extensions().count(), 1);

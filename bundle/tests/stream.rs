@@ -1,4 +1,4 @@
-use bundle::{BlockEvent, BundleBuilder, BundleReader, BundleWriter, MemoryRetention};
+use bundle::{BlockEvent, BundleBuilder, BundleReader, BundleWriter, MemoryRetention, ReadResult};
 use bundle_bpv7::{
     BlockFlags, BundleFlags, CanonicalBlock, Crc, CreationTimestamp, Eid, HopCount, PrimaryBlock,
 };
@@ -205,9 +205,12 @@ fn stream_compatible_with_inmemory() {
     writer.end_payload().unwrap();
     writer.finish().unwrap();
 
-    let bundle = BundleReader::new()
+    let ReadResult::Accepted(bundle) = BundleReader::new()
         .read_from(stream_buf.as_slice(), MemoryRetention::new())
-        .unwrap();
+        .unwrap()
+    else {
+        panic!("expected accepted");
+    };
     assert_eq!(bundle.primary().version, 7);
 
     let inmem_buf = bundle.encode().unwrap();
@@ -327,9 +330,12 @@ fn memory_retention_roundtrip() {
         .build()
         .unwrap();
     let encoded = bundle.encode().unwrap();
-    let decoded = BundleReader::new()
+    let ReadResult::Accepted(decoded) = BundleReader::new()
         .read_from(encoded.as_slice(), MemoryRetention::new())
-        .unwrap();
+        .unwrap()
+    else {
+        panic!("expected accepted");
+    };
 
     let mut buf = Vec::new();
     decoded.payload(&mut buf).unwrap();
@@ -429,9 +435,12 @@ fn disk_retention_roundtrip() {
 
     let encoded = bundle.encode().unwrap();
     let disk = bundle::DiskRetention::new(path).unwrap();
-    let decoded = BundleReader::new()
+    let ReadResult::Accepted(decoded) = BundleReader::new()
         .read_from(encoded.as_slice(), disk)
-        .unwrap();
+        .unwrap()
+    else {
+        panic!("expected accepted");
+    };
 
     let mut buf = Vec::new();
     decoded.payload(&mut buf).unwrap();
@@ -457,7 +466,9 @@ fn disk_retention_from_stream() {
 
     let file = std::fs::File::open(bundle_path).unwrap();
     let disk = bundle::DiskRetention::new(retention_path).unwrap();
-    let decoded = BundleReader::new().read_from(file, disk).unwrap();
+    let ReadResult::Accepted(decoded) = BundleReader::new().read_from(file, disk).unwrap() else {
+        panic!("expected accepted");
+    };
 
     let mut buf = Vec::new();
     decoded.payload(&mut buf).unwrap();
@@ -498,12 +509,18 @@ fn streaming_crc_matches_inmemory_crc() {
         .unwrap();
     let inmem_buf = bundle.encode().unwrap();
 
-    let stream_bundle = BundleReader::new()
+    let ReadResult::Accepted(stream_bundle) = BundleReader::new()
         .read_from(stream_buf.as_slice(), MemoryRetention::new())
-        .unwrap();
-    let inmem_bundle = BundleReader::new()
+        .unwrap()
+    else {
+        panic!("expected accepted");
+    };
+    let ReadResult::Accepted(inmem_bundle) = BundleReader::new()
         .read_from(inmem_buf.as_slice(), MemoryRetention::new())
-        .unwrap();
+        .unwrap()
+    else {
+        panic!("expected accepted");
+    };
 
     assert_eq!(
         stream_bundle.primary().crc.crc_type(),

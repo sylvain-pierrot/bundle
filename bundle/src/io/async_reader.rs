@@ -10,9 +10,9 @@ use bundle_cbor::{Encoder, StreamDecoder, ToCbor};
 use bundle_io::Error as IoError;
 use futures_io::AsyncRead;
 
-use super::reader::{BlockEvent, OpenBundleReader};
+use super::reader::{BlockEvent, OpenBundleReader, ReadResult};
 use crate::bundle::Bundle;
-use crate::filter::{BundleFilter, BundleMetadata, BundleMutator, FilterChain};
+use crate::filter::{BundleFilter, BundleMetadata, BundleMutator, FilterChain, FilterRejection};
 use crate::retention::{AsyncRetention, NoopRetention};
 
 const HEADER_BUF_SIZE: usize = 65536;
@@ -51,7 +51,11 @@ impl BundleAsyncReader {
     /// Bytes are async-read. Headers are buffered locally and filters
     /// run before any bytes hit retention. Rejected bundles waste
     /// zero retention I/O.
-    pub async fn read_from<R, S>(&self, mut source: R, mut retention: S) -> Result<Bundle<S>, Error>
+    pub async fn read_from<R, S>(
+        &self,
+        mut source: R,
+        mut retention: S,
+    ) -> Result<ReadResult<S>, Error>
     where
         R: AsyncRead + Unpin,
         S: AsyncRetention,
@@ -98,7 +102,9 @@ impl BundleAsyncReader {
                 extensions: &extensions,
                 payload_len: parsed.payload_len,
             };
-            self.chain.run_filters(&meta)?;
+            if let Err(rejection) = self.chain.run_filters(&meta) {
+                return Ok(ReadResult::Rejected(rejection));
+            }
 
             let mutated = self.chain.run_mutators(&mut primary, &mut extensions);
 
@@ -181,7 +187,9 @@ impl BundleAsyncReader {
                 },
             });
 
-            Ok(Bundle::from_parts(primary, extensions, retention))
+            Ok(ReadResult::Accepted(Bundle::from_parts(
+                primary, extensions, retention,
+            )))
         } else {
             // No filters/mutators: write everything to retention, parse once.
             retention
@@ -209,7 +217,7 @@ impl BundleAsyncReader {
             // Parse from header_buf to build Bundle<S>.
             let empty = Arc::new(FilterChain::new());
             match OpenBundleReader::open(&header_buf[..], NoopRetention, empty).into_bundle() {
-                Ok(bundle) => Ok(bundle.swap_retention(retention)),
+                Ok(bundle) => Ok(ReadResult::Accepted(bundle.swap_retention(retention))),
                 Err(e) => {
                     let _ = retention.discard().await;
                     Err(e)

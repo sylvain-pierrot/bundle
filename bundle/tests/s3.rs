@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use aws_sdk_s3::primitives::ByteStream;
-use bundle::{BundleAsyncReader, BundleBuilder, MemoryRetention, S3Ops, S3Retention};
+use bundle::{BundleAsyncReader, BundleBuilder, MemoryRetention, ReadResult, S3Ops, S3Retention};
 use bundle_bpv7::Eid;
 use bundle_io::Error as IoError;
 
@@ -186,10 +186,13 @@ async fn s3_small_bundle() {
     let encoded = bundle.encode().unwrap();
 
     let retention = S3Retention::new(client, BUCKET, "test/small");
-    let decoded = BundleAsyncReader::new()
+    let ReadResult::Accepted(decoded) = BundleAsyncReader::new()
         .read_from(futures::io::Cursor::new(&encoded), retention)
         .await
-        .unwrap();
+        .unwrap()
+    else {
+        panic!("expected accepted");
+    };
 
     assert_eq!(decoded.primary().dest_eid, bundle.primary().dest_eid);
     assert_eq!(decoded.payload_len(), payload.len() as u64);
@@ -226,10 +229,13 @@ async fn s3_large_bundle_multipart() {
     let encoded = bundle.encode().unwrap();
 
     let retention = S3Retention::new(client, BUCKET, "test/large-multipart");
-    let decoded = BundleAsyncReader::new()
+    let ReadResult::Accepted(decoded) = BundleAsyncReader::new()
         .read_from(futures::io::Cursor::new(&encoded), retention)
         .await
-        .unwrap();
+        .unwrap()
+    else {
+        panic!("expected accepted");
+    };
 
     assert_eq!(decoded.payload_len(), payload.len() as u64);
 
@@ -381,10 +387,13 @@ async fn s3_throughput_test(size_mb: usize) {
     let key = format!("bench/{size_mb}mb");
     let t = Instant::now();
     let retention = S3Retention::new(MinioClient::new().await, BUCKET, &key);
-    let decoded = BundleAsyncReader::new()
+    let ReadResult::Accepted(decoded) = BundleAsyncReader::new()
         .read_from(futures::io::Cursor::new(&encoded), retention)
         .await
-        .unwrap();
+        .unwrap()
+    else {
+        panic!("expected accepted");
+    };
     throughput("receive → S3", encoded.len() as u64, t.elapsed());
 
     // Phase 3: read payload back from S3
@@ -444,10 +453,13 @@ async fn s3_throughput_many_small() {
         handles.push(tokio::spawn(async move {
             let key = format!("bench/small/{i}");
             let retention = S3Retention::new(MinioClient::new().await, BUCKET, &key);
-            let decoded = BundleAsyncReader::new()
+            let ReadResult::Accepted(decoded) = BundleAsyncReader::new()
                 .read_from(futures::io::Cursor::new(encoded.as_slice()), retention)
                 .await
-                .unwrap();
+                .unwrap()
+            else {
+                panic!("expected accepted");
+            };
             assert_eq!(decoded.payload_len(), payload_len);
             drop(permit);
         }));

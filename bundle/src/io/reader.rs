@@ -8,9 +8,17 @@ use bundle_cbor::{Encoder, StreamDecoder, ToCbor};
 use bundle_io::{Error as IoError, Read};
 
 use crate::bundle::Bundle;
-use crate::filter::{BundleFilter, BundleMetadata, BundleMutator, FilterChain};
+use crate::filter::{BundleFilter, BundleMetadata, BundleMutator, FilterChain, FilterRejection};
 use crate::io::adapters::{CaptureReader, DeferredReader, TeeReader};
 use crate::retention::Retention;
+
+/// Result of reading a bundle through a filter pipeline.
+pub enum ReadResult<S> {
+    /// Bundle passed all filters and is ready to use.
+    Accepted(Bundle<S>),
+    /// Bundle was rejected by a filter.
+    Rejected(FilterRejection),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
@@ -61,8 +69,12 @@ impl BundleReader {
         &self,
         source: R,
         retention: S,
-    ) -> Result<Bundle<S>, Error> {
-        OpenBundleReader::open(source, retention, self.chain.clone()).into_bundle()
+    ) -> Result<ReadResult<S>, Error> {
+        match OpenBundleReader::open(source, retention, self.chain.clone()).into_bundle() {
+            Ok(bundle) => Ok(ReadResult::Accepted(bundle)),
+            Err(Error::FilterRejected(r)) => Ok(ReadResult::Rejected(r)),
+            Err(e) => Err(e),
+        }
     }
 
     /// Open a source for step-by-step parsing.

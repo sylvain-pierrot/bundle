@@ -5,8 +5,9 @@
 use std::net::{TcpListener, TcpStream};
 use std::thread;
 
-use bundle::{BundleBuilder, BundleReader, BundleWriter, MemoryRetention};
+use bundle::{BundleBuilder, BundleReader, BundleWriter, MemoryRetention, ReadResult};
 use bundle_bpv7::Eid;
+
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
@@ -18,7 +19,9 @@ fn main() {
         let reader = BundleReader::new();
 
         let retention = MemoryRetention::new();
-        let bundle = reader.read_from(stream, retention).unwrap();
+        let ReadResult::Accepted(bundle) = reader.read_from(stream, retention).unwrap() else {
+            panic!("expected accepted");
+        };
 
         let mut payload = Vec::new();
         bundle.payload(&mut payload).unwrap();

@@ -8,7 +8,7 @@ mod async_writer;
 mod reader;
 mod writer;
 
-pub use reader::{BlockEvent, BundleReader, OpenBundleReader, PayloadReader};
+pub use reader::{BlockEvent, BundleReader, OpenBundleReader, PayloadReader, ReadResult};
 pub use writer::{BundleWriter, OpenBundleWriter};
 
 #[cfg(feature = "async")]
