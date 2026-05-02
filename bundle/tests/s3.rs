@@ -183,7 +183,8 @@ async fn s3_small_bundle() {
     .build()
     .unwrap();
 
-    let encoded = bundle.encode().unwrap();
+    let mut encoded = Vec::new();
+    bundle.encode_to(&mut encoded).unwrap();
 
     let retention = S3Retention::new(client, BUCKET, "test/small");
     let ReadResult::Accepted(decoded) = BundleAsyncReader::new()
@@ -226,7 +227,8 @@ async fn s3_large_bundle_multipart() {
     .build()
     .unwrap();
 
-    let encoded = bundle.encode().unwrap();
+    let mut encoded = Vec::new();
+    bundle.encode_to(&mut encoded).unwrap();
 
     let retention = S3Retention::new(client, BUCKET, "test/large-multipart");
     let ReadResult::Accepted(decoded) = BundleAsyncReader::new()
@@ -299,7 +301,7 @@ async fn s3_stream_from_http() {
     // Wrap sync reader as AsyncRead, stream to S3 via from_stream
     let async_body = futures::io::AllowStdIo::new(body);
     let retention = S3Retention::new(MinioClient::new().await, BUCKET, "test/streamed");
-    let bundle = BundleBuilder::from_async_stream(
+    let bundle = BundleBuilder::from_stream(
         Eid::Ipn {
             allocator_id: 0,
             node_number: 10,
@@ -409,7 +411,7 @@ async fn s3_throughput_test(size_mb: usize) {
     let t = Instant::now();
     let mut out = Vec::new();
     decoded
-        .async_encode_to(futures::io::Cursor::new(&mut out))
+        .encode_to(futures::io::Cursor::new(&mut out))
         .await
         .unwrap();
     throughput("encode S3 → wire", out.len() as u64, t.elapsed());

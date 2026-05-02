@@ -121,7 +121,11 @@ impl<S> BundleBuilder<S> {
         self
     }
 
-    pub fn extension(mut self, ext: impl Extension, flags: BlockFlags, crc: Crc) -> Self {
+    pub fn extension(self, ext: impl Extension) -> Self {
+        self.extension_with(ext, BlockFlags::from_bits(0), Crc::None)
+    }
+
+    pub fn extension_with(mut self, ext: impl Extension, flags: BlockFlags, crc: Crc) -> Self {
         let next_num = self
             .blocks
             .iter()
@@ -237,9 +241,9 @@ impl<S: Retention> BundleBuilder<S> {
 impl<S: AsyncRetention> BundleBuilder<S> {
     /// Create a builder with an async streaming payload.
     ///
-    /// Async-reads from `source` in 64KB chunks and async-writes to retention.
+    /// Reads from `source` in 64KB chunks and writes to retention.
     /// `payload_len` must be the exact number of bytes that will be read.
-    pub async fn from_async_stream<R: AsyncRead + Unpin>(
+    pub async fn from_stream<R: AsyncRead + Unpin>(
         dest_eid: Eid,
         src_node_id: Eid,
         lifetime: u64,

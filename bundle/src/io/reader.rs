@@ -70,11 +70,7 @@ impl BundleReader {
         source: R,
         retention: S,
     ) -> Result<ReadResult<S>, Error> {
-        match OpenBundleReader::open(source, retention, self.chain.clone()).into_bundle() {
-            Ok(bundle) => Ok(ReadResult::Accepted(bundle)),
-            Err(Error::FilterRejected(r)) => Ok(ReadResult::Rejected(r)),
-            Err(e) => Err(e),
-        }
+        OpenBundleReader::open(source, retention, self.chain.clone()).into_bundle()
     }
 
     /// Open a source for step-by-step parsing.
@@ -259,7 +255,7 @@ impl<R: Read, S: Retention> OpenBundleReader<R, S> {
         Ok(())
     }
 
-    pub fn into_bundle(mut self) -> Result<Bundle<S>, Error> {
+    pub fn into_bundle(mut self) -> Result<ReadResult<S>, Error> {
         let err = loop {
             match self.next_block() {
                 Ok(Some(BlockEvent::Payload { len })) => {
@@ -286,8 +282,13 @@ impl<R: Read, S: Retention> OpenBundleReader<R, S> {
                         let _ = retention.discard();
                         return Err(Error::Cbor(bundle_cbor::Error::Io(e)));
                     }
-                    return Ok(Bundle::from_parts(primary, self.blocks, retention));
+                    return Ok(ReadResult::Accepted(Bundle::from_parts(
+                        primary,
+                        self.blocks,
+                        retention,
+                    )));
                 }
+                Err(Error::FilterRejected(r)) => return Ok(ReadResult::Rejected(r)),
                 Err(e) => break e,
             }
         };

@@ -53,7 +53,7 @@ impl BundleWriter {
         use bundle_bpv7::BlockData;
         use bundle_io::Read;
 
-        let mut w = OpenBundleWriter::new(writer, self.chain.clone())?;
+        let mut w = OpenBundleWriter::new(writer, self.chain.clone());
         w.write_primary(bundle.primary())?;
 
         for block in bundle.blocks() {
@@ -80,7 +80,7 @@ impl BundleWriter {
     }
 
     /// Open a destination for step-by-step writing.
-    pub fn open<W: bundle_io::Write>(&self, writer: W) -> Result<OpenBundleWriter<W>, Error> {
+    pub fn open<W: bundle_io::Write>(&self, writer: W) -> OpenBundleWriter<W> {
         OpenBundleWriter::new(writer, self.chain.clone())
     }
 }
@@ -105,9 +105,9 @@ pub struct OpenBundleWriter<W> {
 }
 
 impl<W: bundle_io::Write> OpenBundleWriter<W> {
-    fn new(writer: W, chain: Arc<FilterChain>) -> Result<Self, Error> {
+    fn new(writer: W, chain: Arc<FilterChain>) -> Self {
         let deferred = !chain.is_empty();
-        Ok(Self {
+        Self {
             enc: StreamEncoder::new(writer),
             state: State::Init,
             payload_hasher: None,
@@ -117,7 +117,7 @@ impl<W: bundle_io::Write> OpenBundleWriter<W> {
             primary: None,
             extensions: Vec::new(),
             deferred,
-        })
+        }
     }
 
     pub fn write_primary(&mut self, primary: &PrimaryBlock) -> Result<(), Error> {

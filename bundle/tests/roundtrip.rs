@@ -16,7 +16,8 @@ fn roundtrip_minimal_bundle() {
     )
     .build()
     .unwrap();
-    let encoded = bundle.encode().unwrap();
+    let mut encoded = Vec::new();
+    bundle.encode_to(&mut encoded).unwrap();
     let ReadResult::Accepted(decoded) = BundleReader::new()
         .read_from(encoded.as_slice(), MemoryRetention::new())
         .unwrap()
@@ -28,7 +29,8 @@ fn roundtrip_minimal_bundle() {
     assert_eq!(decoded.primary().dest_eid, Eid::Null);
     assert_eq!(decoded.primary().lifetime, 3_600_000_000);
 
-    let reencoded = decoded.encode().unwrap();
+    let mut reencoded = Vec::new();
+    decoded.encode_to(&mut reencoded).unwrap();
     assert_eq!(encoded, reencoded);
 }
 
@@ -37,7 +39,8 @@ fn roundtrip_empty_payload() {
     let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, b"", MemoryRetention::new())
         .build()
         .unwrap();
-    let encoded = bundle.encode().unwrap();
+    let mut encoded = Vec::new();
+    bundle.encode_to(&mut encoded).unwrap();
     let ReadResult::Accepted(decoded) = BundleReader::new()
         .read_from(encoded.as_slice(), MemoryRetention::new())
         .unwrap()
@@ -47,7 +50,8 @@ fn roundtrip_empty_payload() {
 
     assert_eq!(decoded.payload_len(), 0);
 
-    let reencoded = decoded.encode().unwrap();
+    let mut reencoded = Vec::new();
+    decoded.encode_to(&mut reencoded).unwrap();
     assert_eq!(encoded, reencoded);
 }
 
@@ -72,23 +76,16 @@ fn roundtrip_with_extensions() {
         MemoryRetention::new(),
     )
     .creation_ts(CreationTimestamp { time: 1000, seq: 1 })
-    .extension(
-        HopCount {
-            limit: 30,
-            count: 0,
-        },
-        BlockFlags::from_bits(0),
-        Crc::None,
-    )
-    .extension(
-        BundleAge { millis: 12345 },
-        BlockFlags::from_bits(0),
-        Crc::None,
-    )
+    .extension(HopCount {
+        limit: 30,
+        count: 0,
+    })
+    .extension(BundleAge { millis: 12345 })
     .build()
     .unwrap();
 
-    let encoded = bundle.encode().unwrap();
+    let mut encoded = Vec::new();
+    bundle.encode_to(&mut encoded).unwrap();
     let ReadResult::Accepted(decoded) = BundleReader::new()
         .read_from(encoded.as_slice(), MemoryRetention::new())
         .unwrap()
@@ -115,7 +112,8 @@ fn roundtrip_with_extensions() {
         .unwrap();
     assert_eq!(age.millis, 12345);
 
-    let reencoded = decoded.encode().unwrap();
+    let mut reencoded = Vec::new();
+    decoded.encode_to(&mut reencoded).unwrap();
     assert_eq!(encoded, reencoded);
 }
 
@@ -135,7 +133,8 @@ fn roundtrip_with_dtn_eids() {
     .build()
     .unwrap();
 
-    let encoded = bundle.encode().unwrap();
+    let mut encoded = Vec::new();
+    bundle.encode_to(&mut encoded).unwrap();
     let ReadResult::Accepted(decoded) = BundleReader::new()
         .read_from(encoded.as_slice(), MemoryRetention::new())
         .unwrap()
@@ -165,7 +164,8 @@ fn roundtrip_fragment() {
         .build()
         .unwrap();
 
-    let encoded = bundle.encode().unwrap();
+    let mut encoded = Vec::new();
+    bundle.encode_to(&mut encoded).unwrap();
     let ReadResult::Accepted(decoded) = BundleReader::new()
         .read_from(encoded.as_slice(), MemoryRetention::new())
         .unwrap()
@@ -177,7 +177,8 @@ fn roundtrip_fragment() {
     assert_eq!(frag.offset, 100);
     assert_eq!(frag.total_adu_len, 5000);
 
-    let reencoded = decoded.encode().unwrap();
+    let mut reencoded = Vec::new();
+    decoded.encode_to(&mut reencoded).unwrap();
     assert_eq!(encoded, reencoded);
 }
 
@@ -187,7 +188,8 @@ fn roundtrip_crc_values_nonzero() {
     let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
         .build()
         .unwrap();
-    let encoded = bundle.encode().unwrap();
+    let mut encoded = Vec::new();
+    bundle.encode_to(&mut encoded).unwrap();
     let ReadResult::Accepted(decoded) = BundleReader::new()
         .read_from(encoded.as_slice(), MemoryRetention::new())
         .unwrap()
@@ -354,14 +356,16 @@ fn crc_verify_detects_corruption() {
     let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
         .build()
         .unwrap();
-    let encoded = bundle.encode().unwrap();
+    let mut encoded = Vec::new();
+    bundle.encode_to(&mut encoded).unwrap();
 
     let mut corrupted = encoded.clone();
     corrupted[5] ^= 0xFF;
     if let Ok(ReadResult::Accepted(bad)) =
         BundleReader::new().read_from(corrupted.as_slice(), MemoryRetention::new())
     {
-        let reencoded = bad.encode().unwrap();
+        let mut reencoded = Vec::new();
+        bad.encode_to(&mut reencoded).unwrap();
         assert_ne!(reencoded, corrupted);
     }
 }

@@ -20,7 +20,7 @@ fn stream_roundtrip_minimal() {
     let payload = b"hello streaming";
 
     let mut buf = Vec::new();
-    let mut writer = BundleWriter::new().open(&mut buf).unwrap();
+    let mut writer = BundleWriter::new().open(&mut buf);
     writer.write_primary(&primary).unwrap();
     writer
         .begin_payload(BlockFlags::from_bits(0), Crc::None, payload.len() as u64)
@@ -48,7 +48,9 @@ fn stream_roundtrip_minimal() {
     }
     assert_eq!(read_payload, payload);
     assert_eq!(session.primary().unwrap().version, 7);
-    let bundle = session.into_bundle().unwrap();
+    let ReadResult::Accepted(bundle) = session.into_bundle().unwrap() else {
+        panic!("expected accepted");
+    };
     assert!(bundle.payload_crc().is_none());
 }
 
@@ -72,7 +74,7 @@ fn stream_roundtrip_with_crc() {
     let payload = b"payload with crc";
 
     let mut buf = Vec::new();
-    let mut writer = BundleWriter::new().open(&mut buf).unwrap();
+    let mut writer = BundleWriter::new().open(&mut buf);
     writer.write_primary(&primary).unwrap();
     writer
         .begin_payload(BlockFlags::from_bits(0), Crc::crc16(), payload.len() as u64)
@@ -97,7 +99,9 @@ fn stream_roundtrip_with_crc() {
         }
     }
     assert_eq!(read_payload, payload);
-    let bundle = session.into_bundle().unwrap();
+    let ReadResult::Accepted(bundle) = session.into_bundle().unwrap() else {
+        panic!("expected accepted");
+    };
     assert_eq!(bundle.payload_crc().crc_type(), 1);
 }
 
@@ -121,7 +125,7 @@ fn stream_roundtrip_with_extensions() {
     let ext = CanonicalBlock::from_ext(2, BlockFlags::from_bits(0), Crc::None, &hc);
 
     let mut buf = Vec::new();
-    let mut writer = BundleWriter::new().open(&mut buf).unwrap();
+    let mut writer = BundleWriter::new().open(&mut buf);
     writer.write_primary(&primary).unwrap();
     writer.write_extension(&ext).unwrap();
     writer
@@ -160,7 +164,7 @@ fn stream_walk() {
     };
 
     let mut buf = Vec::new();
-    let mut writer = BundleWriter::new().open(&mut buf).unwrap();
+    let mut writer = BundleWriter::new().open(&mut buf);
     writer.write_primary(&primary).unwrap();
     writer
         .begin_payload(BlockFlags::from_bits(0), Crc::None, 1000)
@@ -176,7 +180,9 @@ fn stream_walk() {
             session.walk(len).unwrap();
         }
     }
-    let bundle = session.into_bundle().unwrap();
+    let ReadResult::Accepted(bundle) = session.into_bundle().unwrap() else {
+        panic!("expected accepted");
+    };
     assert!(bundle.payload_crc().is_none());
 }
 
@@ -196,7 +202,7 @@ fn stream_compatible_with_inmemory() {
     let payload = b"cross-api test";
 
     let mut stream_buf = Vec::new();
-    let mut writer = BundleWriter::new().open(&mut stream_buf).unwrap();
+    let mut writer = BundleWriter::new().open(&mut stream_buf);
     writer.write_primary(&primary).unwrap();
     writer
         .begin_payload(BlockFlags::from_bits(0), Crc::None, payload.len() as u64)
@@ -213,7 +219,8 @@ fn stream_compatible_with_inmemory() {
     };
     assert_eq!(bundle.primary().version, 7);
 
-    let inmem_buf = bundle.encode().unwrap();
+    let mut inmem_buf = Vec::new();
+    bundle.encode_to(&mut inmem_buf).unwrap();
     assert_eq!(stream_buf, inmem_buf);
 }
 
@@ -241,7 +248,7 @@ fn stream_forwarding_pattern() {
     let payload = b"forwarded payload";
 
     let mut original = Vec::new();
-    let mut w = BundleWriter::new().open(&mut original).unwrap();
+    let mut w = BundleWriter::new().open(&mut original);
     w.write_primary(&primary).unwrap();
     w.begin_payload(BlockFlags::from_bits(0), Crc::None, payload.len() as u64)
         .unwrap();
@@ -252,7 +259,7 @@ fn stream_forwarding_pattern() {
     let mut session = BundleReader::new().open(original.as_slice(), MemoryRetention::new());
 
     let mut forwarded = Vec::new();
-    let mut writer = BundleWriter::new().open(&mut forwarded).unwrap();
+    let mut writer = BundleWriter::new().open(&mut forwarded);
     let mut wrote_primary = false;
 
     while let Some(event) = session.next_block().unwrap() {
@@ -329,7 +336,8 @@ fn memory_retention_roundtrip() {
     let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
         .build()
         .unwrap();
-    let encoded = bundle.encode().unwrap();
+    let mut encoded = Vec::new();
+    bundle.encode_to(&mut encoded).unwrap();
     let ReadResult::Accepted(decoded) = BundleReader::new()
         .read_from(encoded.as_slice(), MemoryRetention::new())
         .unwrap()
@@ -341,7 +349,8 @@ fn memory_retention_roundtrip() {
     decoded.payload(&mut buf).unwrap();
     assert_eq!(buf, payload);
 
-    let reencoded = decoded.encode().unwrap();
+    let mut reencoded = Vec::new();
+    decoded.encode_to(&mut reencoded).unwrap();
     assert_eq!(encoded, reencoded);
 }
 
@@ -359,7 +368,7 @@ fn retention_builder_payload_reader() {
 #[test]
 fn writer_rejects_excess_payload() {
     let mut buf = Vec::new();
-    let mut writer = BundleWriter::new().open(&mut buf).unwrap();
+    let mut writer = BundleWriter::new().open(&mut buf);
     writer
         .write_primary(&PrimaryBlock {
             version: 7,
@@ -394,7 +403,7 @@ fn reader_walk_partial() {
     };
 
     let mut buf = Vec::new();
-    let mut writer = BundleWriter::new().open(&mut buf).unwrap();
+    let mut writer = BundleWriter::new().open(&mut buf);
     writer.write_primary(&primary).unwrap();
     writer
         .begin_payload(BlockFlags::from_bits(0), Crc::None, 100)
@@ -410,7 +419,9 @@ fn reader_walk_partial() {
             session.walk(50).unwrap();
         }
     }
-    let bundle = session.into_bundle().unwrap();
+    let ReadResult::Accepted(bundle) = session.into_bundle().unwrap() else {
+        panic!("expected accepted");
+    };
     assert_eq!(bundle.payload_len(), 100);
 }
 
@@ -433,7 +444,8 @@ fn disk_retention_roundtrip() {
     .build()
     .unwrap();
 
-    let encoded = bundle.encode().unwrap();
+    let mut encoded = Vec::new();
+    bundle.encode_to(&mut encoded).unwrap();
     let disk = bundle::DiskRetention::new(path).unwrap();
     let ReadResult::Accepted(decoded) = BundleReader::new()
         .read_from(encoded.as_slice(), disk)
@@ -446,7 +458,8 @@ fn disk_retention_roundtrip() {
     decoded.payload(&mut buf).unwrap();
     assert_eq!(buf, payload);
 
-    let reencoded = decoded.encode().unwrap();
+    let mut reencoded = Vec::new();
+    decoded.encode_to(&mut reencoded).unwrap();
     assert_eq!(encoded, reencoded);
 
     std::fs::remove_file(path).unwrap();
@@ -461,7 +474,8 @@ fn disk_retention_from_stream() {
     let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
         .build()
         .unwrap();
-    let encoded = bundle.encode().unwrap();
+    let mut encoded = Vec::new();
+    bundle.encode_to(&mut encoded).unwrap();
     std::fs::write(bundle_path, &encoded).unwrap();
 
     let file = std::fs::File::open(bundle_path).unwrap();
@@ -495,7 +509,7 @@ fn streaming_crc_matches_inmemory_crc() {
     };
 
     let mut stream_buf = Vec::new();
-    let mut writer = BundleWriter::new().open(&mut stream_buf).unwrap();
+    let mut writer = BundleWriter::new().open(&mut stream_buf);
     writer.write_primary(&primary).unwrap();
     writer
         .begin_payload(BlockFlags::from_bits(0), Crc::crc16(), payload.len() as u64)
@@ -507,7 +521,8 @@ fn streaming_crc_matches_inmemory_crc() {
     let bundle = BundleBuilder::new(Eid::Null, Eid::Null, 1000, payload, MemoryRetention::new())
         .build()
         .unwrap();
-    let inmem_buf = bundle.encode().unwrap();
+    let mut inmem_buf = Vec::new();
+    bundle.encode_to(&mut inmem_buf).unwrap();
 
     let ReadResult::Accepted(stream_bundle) = BundleReader::new()
         .read_from(stream_buf.as_slice(), MemoryRetention::new())
@@ -527,8 +542,10 @@ fn streaming_crc_matches_inmemory_crc() {
         inmem_bundle.primary().crc.crc_type()
     );
 
-    let re_stream = stream_bundle.encode().unwrap();
-    let re_inmem = inmem_bundle.encode().unwrap();
+    let mut re_stream = Vec::new();
+    stream_bundle.encode_to(&mut re_stream).unwrap();
+    let mut re_inmem = Vec::new();
+    inmem_bundle.encode_to(&mut re_inmem).unwrap();
     assert_eq!(stream_buf, re_stream);
     assert_eq!(inmem_buf, re_inmem);
 }

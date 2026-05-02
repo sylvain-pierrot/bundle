@@ -14,4 +14,4 @@ pub use writer::{BundleWriter, OpenBundleWriter};
 #[cfg(feature = "async")]
 pub use async_reader::BundleAsyncReader;
 #[cfg(feature = "async")]
-pub use async_writer::BundleAsyncWriter;
+pub use async_writer::{BundleAsyncWriter, OpenBundleAsyncWriter};

@@ -217,11 +217,14 @@ impl BundleAsyncReader {
             // Parse from header_buf to build Bundle<S>.
             let empty = Arc::new(FilterChain::new());
             match OpenBundleReader::open(&header_buf[..], NoopRetention, empty).into_bundle() {
-                Ok(bundle) => Ok(ReadResult::Accepted(bundle.swap_retention(retention))),
+                Ok(ReadResult::Accepted(bundle)) => {
+                    Ok(ReadResult::Accepted(bundle.swap_retention(retention)))
+                }
                 Err(e) => {
                     let _ = retention.discard().await;
                     Err(e)
                 }
+                _ => unreachable!("no filters cofigured"),
             }
         }
     }

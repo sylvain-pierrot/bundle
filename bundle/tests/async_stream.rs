@@ -117,7 +117,7 @@ async fn async_writer_roundtrip() {
 
     let mut buf = Vec::new();
     let cursor = futures::io::Cursor::new(&mut buf);
-    let mut writer = BundleAsyncWriter::new(cursor).await.unwrap();
+    let mut writer = BundleAsyncWriter::new().open(cursor);
     writer.write_primary(&primary).await.unwrap();
     writer
         .begin_payload(BlockFlags::from_bits(0), Crc::None, payload.len() as u64)
@@ -160,14 +160,10 @@ async fn async_full_roundtrip() {
         payload,
         MemoryRetention::new(),
     )
-    .extension(
-        HopCount {
-            limit: 30,
-            count: 1,
-        },
-        BlockFlags::from_bits(0),
-        Crc::None,
-    )
+    .extension(HopCount {
+        limit: 30,
+        count: 1,
+    })
     .build()
     .unwrap();
 

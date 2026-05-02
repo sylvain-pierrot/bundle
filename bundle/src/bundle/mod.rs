@@ -3,8 +3,7 @@ pub mod builder;
 use alloc::vec::Vec;
 use core::ops::{Deref, DerefMut};
 
-use bundle_bpv7::{BlockData, Bundle as Bpv7Bundle, CanonicalBlock, Error, PrimaryBlock};
-use bundle_cbor::{Encoder, ToCbor};
+use bundle_bpv7::{Bundle as Bpv7Bundle, CanonicalBlock, Error, PrimaryBlock};
 use bundle_io::{Error as IoError, Read, Write};
 
 use crate::retention::Retention;
@@ -75,39 +74,6 @@ impl<S: Retention> Bundle<S> {
         Ok(written)
     }
 
-    pub fn encode(&self) -> Result<Vec<u8>, Error> {
-        self.validate()?;
-
-        let mut enc = Encoder::with_capacity(256);
-        enc.write_indefinite_array();
-        self.primary().encode(&mut enc);
-
-        for block in self.blocks() {
-            match &block.data {
-                BlockData::Inline(_) => block.encode(&mut enc),
-                BlockData::Retained { offset, len } => {
-                    let mut payload_data = alloc::vec![0u8; *len as usize];
-                    self.retention
-                        .reader(*offset, *len)?
-                        .read_exact(&mut payload_data)?;
-
-                    let has_crc = !block.crc.is_none();
-                    let block_start = enc.position();
-                    enc.write_array(if has_crc { 6 } else { 5 });
-                    enc.write_uint(block.block_type);
-                    enc.write_uint(block.block_number);
-                    enc.write_uint(block.flags.bits());
-                    enc.write_uint(block.crc.crc_type());
-                    enc.write_bstr(&payload_data);
-                    block.crc.encode_and_finalize(&mut enc, block_start);
-                }
-            }
-        }
-
-        enc.write_break();
-        Ok(enc.into_bytes())
-    }
-
     pub fn encode_to<W: Write>(&self, writer: W) -> Result<(), Error> {
         crate::io::BundleWriter::new().write_to(self, writer)
     }
@@ -138,32 +104,9 @@ impl<S: AsyncRetention> Bundle<S> {
         Ok(written)
     }
 
-    pub async fn async_encode_to<W: AsyncWrite + Unpin>(&self, writer: W) -> Result<(), Error> {
+    pub async fn encode_to<W: AsyncWrite + Unpin>(&self, writer: W) -> Result<(), Error> {
         self.validate()?;
-        let mut w = BundleAsyncWriter::new(writer).await?;
-        w.write_primary(self.primary()).await?;
-
-        for block in self.blocks() {
-            match &block.data {
-                BlockData::Inline(_) => w.write_extension(block).await?,
-                BlockData::Retained { offset, len } => {
-                    w.begin_payload(block.flags, block.crc, *len).await?;
-                    let mut reader = self.retention.reader(*offset, *len).await?;
-                    let mut buf = [0u8; 65536];
-                    loop {
-                        let n = reader.read(&mut buf)?;
-                        if n == 0 {
-                            break;
-                        }
-                        w.write_payload_data(&buf[..n]).await?;
-                    }
-                    w.end_payload().await?;
-                }
-            }
-        }
-
-        w.finish().await?;
-        Ok(())
+        BundleAsyncWriter::new().write_to(self, writer).await
     }
 }
 

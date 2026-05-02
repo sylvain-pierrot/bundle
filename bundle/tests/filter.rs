@@ -3,7 +3,7 @@ use bundle_bpv7::filter::builtin::{
     DestinationFilter, HopCountFilter, HopCountIncrementMutator, MaxPayloadSizeFilter,
     PreviousNodeMutator,
 };
-use bundle_bpv7::{BlockFlags, Crc, Eid, HopCount, PreviousNode};
+use bundle_bpv7::{Eid, HopCount, PreviousNode};
 fn local_eid() -> Eid {
     Eid::Ipn {
         allocator_id: 0,
@@ -87,14 +87,10 @@ fn rejected_bundle_zero_retention_io() {
 
 #[test]
 fn hop_count_filter_accepts_valid() {
-    let encoded = encode(build_bundle(b"valid hop count").extension(
-        HopCount {
-            limit: 30,
-            count: 5,
-        },
-        BlockFlags::from_bits(0),
-        Crc::None,
-    ));
+    let encoded = encode(build_bundle(b"valid hop count").extension(HopCount {
+        limit: 30,
+        count: 5,
+    }));
 
     let reader = BundleReader::new().filter(HopCountFilter);
     let ReadResult::Accepted(bundle) = reader
@@ -108,14 +104,10 @@ fn hop_count_filter_accepts_valid() {
 
 #[test]
 fn hop_count_filter_rejects_exceeded() {
-    let encoded = encode(build_bundle(b"expired").extension(
-        HopCount {
-            limit: 10,
-            count: 11,
-        },
-        BlockFlags::from_bits(0),
-        Crc::None,
-    ));
+    let encoded = encode(build_bundle(b"expired").extension(HopCount {
+        limit: 10,
+        count: 11,
+    }));
 
     let reader = BundleReader::new().filter(HopCountFilter);
     let result = reader
@@ -167,14 +159,10 @@ fn multiple_filters_first_rejection_wins() {
 
 #[test]
 fn hop_count_increment_mutator() {
-    let encoded = encode(build_bundle(b"hop test").extension(
-        HopCount {
-            limit: 30,
-            count: 5,
-        },
-        BlockFlags::from_bits(0),
-        Crc::None,
-    ));
+    let encoded = encode(build_bundle(b"hop test").extension(HopCount {
+        limit: 30,
+        count: 5,
+    }));
 
     let reader = BundleReader::new().mutator(HopCountIncrementMutator::new(30));
     let ReadResult::Accepted(bundle) = reader
@@ -251,11 +239,7 @@ fn previous_node_mutator_replaces_existing() {
             service_number: 0,
         },
     };
-    let encoded = encode(build_bundle(b"replace prev").extension(
-        old_pn,
-        BlockFlags::from_bits(0),
-        Crc::None,
-    ));
+    let encoded = encode(build_bundle(b"replace prev").extension(old_pn));
 
     let new_node = Eid::Ipn {
         allocator_id: 0,
@@ -283,14 +267,10 @@ fn previous_node_mutator_replaces_existing() {
 
 #[test]
 fn filter_then_mutate() {
-    let encoded = encode(build_bundle(b"filter and mutate").extension(
-        HopCount {
-            limit: 30,
-            count: 5,
-        },
-        BlockFlags::from_bits(0),
-        Crc::None,
-    ));
+    let encoded = encode(build_bundle(b"filter and mutate").extension(HopCount {
+        limit: 30,
+        count: 5,
+    }));
 
     let reader = BundleReader::new()
         .filter(HopCountFilter)
@@ -331,11 +311,7 @@ fn filter_then_mutate() {
 
 #[test]
 fn filter_rejects_before_mutate() {
-    let encoded = encode(build_bundle(b"rejected").extension(
-        HopCount { limit: 5, count: 6 },
-        BlockFlags::from_bits(0),
-        Crc::None,
-    ));
+    let encoded = encode(build_bundle(b"rejected").extension(HopCount { limit: 5, count: 6 }));
 
     let reader = BundleReader::new()
         .filter(HopCountFilter)
@@ -351,14 +327,10 @@ fn filter_rejects_before_mutate() {
 
 #[test]
 fn filtered_mutated_bundle_roundtrip() {
-    let encoded = encode(build_bundle(b"roundtrip").extension(
-        HopCount {
-            limit: 30,
-            count: 5,
-        },
-        BlockFlags::from_bits(0),
-        Crc::None,
-    ));
+    let encoded = encode(build_bundle(b"roundtrip").extension(HopCount {
+        limit: 30,
+        count: 5,
+    }));
 
     let reader = BundleReader::new()
         .filter(HopCountFilter)
@@ -410,14 +382,10 @@ fn filtered_mutated_bundle_roundtrip() {
 
 #[test]
 fn retention_holds_mutated_hop_count() {
-    let encoded = encode(build_bundle(b"retention test").extension(
-        HopCount {
-            limit: 30,
-            count: 0,
-        },
-        BlockFlags::from_bits(0),
-        Crc::None,
-    ));
+    let encoded = encode(build_bundle(b"retention test").extension(HopCount {
+        limit: 30,
+        count: 0,
+    }));
 
     let ReadResult::Accepted(bundle) = BundleReader::new()
         .mutator(HopCountIncrementMutator::new(30))
@@ -490,14 +458,10 @@ fn retention_holds_mutated_previous_node() {
 
 #[test]
 fn no_mutation_preserves_original_bytes() {
-    let encoded = encode(build_bundle(b"no mutation").extension(
-        HopCount {
-            limit: 30,
-            count: 5,
-        },
-        BlockFlags::from_bits(0),
-        Crc::None,
-    ));
+    let encoded = encode(build_bundle(b"no mutation").extension(HopCount {
+        limit: 30,
+        count: 5,
+    }));
 
     // Only a filter, no mutators.
     let ReadResult::Accepted(bundle) = BundleReader::new()

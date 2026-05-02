@@ -21,6 +21,6 @@ pub use retention::DiskRetention;
 pub use retention::FlashRetention;
 
 #[cfg(feature = "async")]
-pub use io::{BundleAsyncReader, BundleAsyncWriter};
+pub use io::{BundleAsyncReader, BundleAsyncWriter, OpenBundleAsyncWriter};
 #[cfg(feature = "async")]
 pub use retention::{AsyncRetention, S3Ops, S3Retention};

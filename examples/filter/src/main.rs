@@ -9,7 +9,7 @@ use bundle::{BundleBuilder, BundleReader, BundleWriter, MemoryRetention, ReadRes
 use bundle_bpv7::filter::builtin::{
     HopCountFilter, HopCountIncrementMutator, MaxPayloadSizeFilter, PreviousNodeMutator,
 };
-use bundle_bpv7::{BlockFlags, Crc, Eid, HopCount, PreviousNode};
+use bundle_bpv7::{Eid, HopCount, PreviousNode};
 
 fn main() {
     let local = Eid::Ipn {
@@ -31,14 +31,10 @@ fn main() {
         b"hello DTN",
         MemoryRetention::new(),
     )
-    .extension(
-        HopCount {
-            limit: 30,
-            count: 5,
-        },
-        BlockFlags::from_bits(0),
-        Crc::None,
-    )
+    .extension(HopCount {
+        limit: 30,
+        count: 5,
+    })
     .build()
     .unwrap();
 

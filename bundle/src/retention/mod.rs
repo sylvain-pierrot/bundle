@@ -40,7 +40,7 @@ pub trait Retention: Write {
 ///
 /// Async counterpart of [`Retention`]. Used by
 /// [`BundleAsyncReader`](crate::BundleAsyncReader) and
-/// [`BundleBuilder::from_async_stream`](crate::BundleBuilder::from_async_stream).
+/// [`BundleBuilder::from_stream`](crate::BundleBuilder::from_stream).
 #[cfg(feature = "async")]
 #[async_trait]
 pub trait AsyncRetention: Send {
