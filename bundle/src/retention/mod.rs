@@ -67,8 +67,10 @@ pub trait AsyncRetention: Send {
 }
 
 /// No-op retention that discards writes.
+#[cfg(feature = "async")]
 pub(crate) struct NoopRetention;
 
+#[cfg(feature = "async")]
 impl Write for NoopRetention {
     fn write_all(&mut self, _buf: &[u8]) -> Result<(), IoError> {
         Ok(())
@@ -79,6 +81,7 @@ impl Write for NoopRetention {
     }
 }
 
+#[cfg(feature = "async")]
 impl Retention for NoopRetention {
     type Reader<'a> = &'a [u8];
 

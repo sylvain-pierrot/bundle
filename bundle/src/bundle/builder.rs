@@ -2,7 +2,9 @@
 
 use alloc::vec::Vec;
 
-use bundle_io::{Error as IoError, Read};
+#[cfg(feature = "async")]
+use bundle_io::Error as IoError;
+use bundle_io::Read;
 
 #[cfg(feature = "async")]
 use core::pin::Pin;

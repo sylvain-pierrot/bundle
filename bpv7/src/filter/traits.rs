@@ -20,7 +20,10 @@ pub trait BundleFilter: Send + Sync {
 
 /// Mutation applied to bundle metadata after all filters pass,
 /// before the payload is streamed to retention (ingress) or wire (egress).
+///
+/// `mutate` returns `true` if it modified anything, `false` otherwise.
+/// This lets the reader skip re-encoding when nothing changed.
 pub trait BundleMutator: Send + Sync {
     fn name(&self) -> &'static str;
-    fn mutate(&self, primary: &mut PrimaryBlock, extensions: &mut Vec<CanonicalBlock>);
+    fn mutate(&self, primary: &mut PrimaryBlock, extensions: &mut Vec<CanonicalBlock>) -> bool;
 }

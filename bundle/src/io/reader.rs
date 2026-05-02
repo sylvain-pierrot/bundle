@@ -4,7 +4,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use bundle_bpv7::{CanonicalBlock, Crc, Error, PrimaryBlock};
-use bundle_cbor::StreamDecoder;
+use bundle_cbor::{Encoder, StreamDecoder, ToCbor};
 use bundle_io::{Error as IoError, Read};
 
 use crate::bundle::Bundle;
@@ -150,7 +150,7 @@ impl<R: Read, S: Retention> OpenBundleReader<R, S> {
             return Ok(None);
         }
 
-        let (block, has_data_in_stream) = CanonicalBlock::decode_stream(&mut self.dec)?;
+        let (mut block, has_data_in_stream) = CanonicalBlock::decode_stream(&mut self.dec)?;
 
         if has_data_in_stream {
             if self.payload_idx.is_some() {
@@ -165,14 +165,47 @@ impl<R: Read, S: Retention> OpenBundleReader<R, S> {
                     payload_len: data_len,
                 };
                 self.chain.run_filters(&meta)?;
-                self.chain.run_mutators(
+
+                let mutated = self.chain.run_mutators(
                     self.primary.as_mut().ok_or(Error::IncompleteRead)?,
                     &mut self.blocks,
                 );
-            }
 
-            if let Some(retention) = self.retention.take() {
-                self.dec.inner().activate_retention(retention)?;
+                if let Some(retention) = self.retention.take() {
+                    if mutated {
+                        // Re-encode mutated headers so storage holds the mutated version.
+                        let mut enc = Encoder::with_capacity(256);
+                        enc.write_indefinite_array();
+                        self.primary
+                            .as_ref()
+                            .ok_or(Error::IncompleteRead)?
+                            .encode(&mut enc);
+                        for ext in &self.blocks {
+                            ext.encode(&mut enc);
+                        }
+                        // Payload block header (data streams through after this).
+                        let has_crc = block.crc.crc_type() != 0;
+                        enc.write_array(if has_crc { 6 } else { 5 });
+                        enc.write_uint(block.block_type);
+                        enc.write_uint(block.block_number);
+                        enc.write_uint(block.flags.bits());
+                        enc.write_uint(block.crc.crc_type());
+                        enc.write_bstr_header(data_len);
+
+                        // Update payload offset to match the re-encoded layout.
+                        let new_offset = enc.position() as u64;
+                        block.data = bundle_bpv7::BlockData::Retained {
+                            offset: new_offset,
+                            len: data_len,
+                        };
+
+                        self.dec
+                            .inner()
+                            .activate_retention_replacing(retention, enc.as_bytes())?;
+                    } else {
+                        self.dec.inner().activate_retention(retention)?;
+                    }
+                }
             }
 
             self.payload_crc_type = block.crc.crc_type();

@@ -56,10 +56,12 @@ impl FilterChain {
         &self,
         primary: &mut PrimaryBlock,
         extensions: &mut Vec<CanonicalBlock>,
-    ) {
+    ) -> bool {
+        let mut mutated = false;
         for m in &self.mutators {
-            m.mutate(primary, extensions);
+            mutated |= m.mutate(primary, extensions);
         }
+        mutated
     }
 }
 

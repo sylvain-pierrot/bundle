@@ -51,6 +51,7 @@ impl<S> Bundle<S> {
         }
     }
 
+    #[cfg(feature = "async")]
     pub(crate) fn swap_retention<T>(self, retention: T) -> Bundle<T> {
         Bundle {
             inner: self.inner,

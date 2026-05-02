@@ -81,12 +81,29 @@ pub(crate) enum DeferredReader<R, S: Retention> {
 }
 
 impl<R, S: Retention> DeferredReader<R, S> {
-    pub fn activate_retention(&mut self, mut retention: S) -> Result<(), IoError> {
+    /// Activate retention, flushing captured bytes.
+    pub fn activate_retention(&mut self, retention: S) -> Result<(), IoError> {
+        self.activate_inner(retention, None)
+    }
+
+    /// Activate retention with re-encoded headers (mutated version).
+    ///
+    /// Discards the original captured bytes. Writes the re-encoded
+    /// headers to retention, then payload streams through TeeReader.
+    pub fn activate_retention_replacing(
+        &mut self,
+        retention: S,
+        encoded_headers: &[u8],
+    ) -> Result<(), IoError> {
+        self.activate_inner(retention, Some(encoded_headers))
+    }
+
+    fn activate_inner(&mut self, mut retention: S, replace: Option<&[u8]>) -> Result<(), IoError> {
         let old = core::mem::replace(self, DeferredReader::Taken);
         match old {
             DeferredReader::Capturing(capture) => {
-                let (source, header_bytes) = capture.into_parts();
-                retention.write_all(&header_bytes)?;
+                let (source, captured) = capture.into_parts();
+                retention.write_all(replace.unwrap_or(&captured))?;
                 *self = DeferredReader::Teeing(TeeReader::new(source, retention));
                 Ok(())
             }

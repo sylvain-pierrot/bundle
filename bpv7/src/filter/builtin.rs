@@ -106,12 +106,12 @@ impl BundleMutator for HopCountIncrementMutator {
         "hop_count_increment"
     }
 
-    fn mutate(&self, _primary: &mut PrimaryBlock, extensions: &mut Vec<CanonicalBlock>) {
+    fn mutate(&self, _primary: &mut PrimaryBlock, extensions: &mut Vec<CanonicalBlock>) -> bool {
         for block in extensions.iter_mut() {
             if let Ok(mut hc) = block.parse_ext::<HopCount>() {
                 hc.count = hc.count.saturating_add(1);
                 *block = CanonicalBlock::from_ext(block.block_number, block.flags, block.crc, &hc);
-                return;
+                return true;
             }
         }
         // No hop count block — add one
@@ -126,6 +126,7 @@ impl BundleMutator for HopCountIncrementMutator {
             Crc::None,
             &hc,
         ));
+        true
     }
 }
 
@@ -145,14 +146,14 @@ impl BundleMutator for PreviousNodeMutator {
         "previous_node"
     }
 
-    fn mutate(&self, _primary: &mut PrimaryBlock, extensions: &mut Vec<CanonicalBlock>) {
+    fn mutate(&self, _primary: &mut PrimaryBlock, extensions: &mut Vec<CanonicalBlock>) -> bool {
         let pn = PreviousNode {
             node_id: self.node_id.clone(),
         };
         for block in extensions.iter_mut() {
             if block.parse_ext::<PreviousNode>().is_ok() {
                 *block = CanonicalBlock::from_ext(block.block_number, block.flags, block.crc, &pn);
-                return;
+                return true;
             }
         }
         // No previous node block — add one
@@ -163,5 +164,6 @@ impl BundleMutator for PreviousNodeMutator {
             Crc::None,
             &pn,
         ));
+        true
     }
 }
